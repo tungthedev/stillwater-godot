@@ -161,7 +161,7 @@ func settings() -> Dictionary:
 	return {
 		"build": build_id,
 		"engine": "Godot %s Compatibility%s" % [Engine.get_version_info().string, " (WebGL2)" if OS.has_feature("web") else ""],
-		"renderer": RenderingServer.get_video_adapter_name(),
+		"renderer": Flags.gpu_name(),
 		"vendor": RenderingServer.get_video_adapter_vendor(),
 		"ua": Flags.user_agent(),
 		"dpr": Flags.device_pixel_ratio(),

@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "slice5-1"
+const BUILD := "slice5-2"
 
 
 func _ready() -> void:
@@ -63,7 +63,7 @@ func _ready() -> void:
 	print("BUILD %s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs renderer=%s" % [
 		BUILD, t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
 		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
-		clouds_sys.puffs, RenderingServer.get_video_adapter_name()])
+		clouds_sys.puffs, Flags.gpu_name()])
 	var bench_shot := Flags.value("bench-shot")
 	if bench_shot != "":
 		bench_sys.finished.connect(func(_r: Dictionary) -> void: _shot(bench_shot), CONNECT_ONE_SHOT)

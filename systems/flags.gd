@@ -41,3 +41,11 @@ static func user_agent() -> String:
 	if OS.has_feature("web"):
 		return str(JavaScriptBridge.eval("navigator.userAgent"))
 	return "%s desktop" % OS.get_name()
+
+
+# The GPU name. On Web Godot only sees the masked "WebKit WebGL", so ask the browser for the
+# unmasked one (Safari answers "Apple GPU").
+static func gpu_name() -> String:
+	if OS.has_feature("web"):
+		return str(JavaScriptBridge.eval("(() => { const gl = document.createElement('canvas').getContext('webgl2'); const x = gl && gl.getExtension('WEBGL_debug_renderer_info'); return gl ? String(x ? gl.getParameter(x.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) : 'no webgl2'; })()"))
+	return RenderingServer.get_video_adapter_name()
