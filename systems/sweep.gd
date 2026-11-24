@@ -2,8 +2,8 @@ extends Node
 
 # On-device interleaved GPU + CPU cost breakdown (?bench=sweep).
 #
-# Interleaves `base, V0, base, V1, ..., base, V_{K-1}, base` on fixed camera poses (trailhead,
-# forest) so slow thermal drift cancels against each variant's immediate neighbouring base windows.
+# Interleaves `base, V0, base, V1, ..., base, V_{K-1}, base` on fixed camera poses (trailhead and
+# forest, first pose alternating between runs) so slow thermal drift cancels against each variant's immediate neighbouring base windows.
 # Also records per-window CPU cost from the early HTML rAF wrapper (window.__rafTimer: callback
 # duration and rAF interval via performance.now()) and Godot's Performance TIME_PROCESS /
 # TIME_PHYSICS_PROCESS medians, alongside FrameTimer's WebGL wait / GPU timer where available.
@@ -114,13 +114,34 @@ func start() -> void:
 func _pick_poses() -> Array[String]:
 	var raw := Flags.value("sweep_poses", "")
 	if raw == "":
-		return DEFAULT_POSES.duplicate()
+		# A phone warms up over a run, so the second pose always measures a hotter device. Swapping
+		# the order on every other run spreads that bias over both poses.
+		var order := DEFAULT_POSES.duplicate()
+		if _next_run_index() % 2 == 1:
+			order.reverse()
+		return order
 	var out: Array[String] = []
 	for p in raw.split(","):
 		var s := p.strip_edges()
 		if s == "trailhead" or s == "forest":
 			out.append(s)
 	return out if not out.is_empty() else DEFAULT_POSES.duplicate()
+
+
+# Counts sweep runs on this device (localStorage on the web, a user:// file elsewhere) and returns
+# the count before this run.
+static func _next_run_index() -> int:
+	if OS.has_feature("web"):
+		var v = JavaScriptBridge.eval("(function(){try{var n=+(localStorage.getItem('sw_sweep_runs')||0);localStorage.setItem('sw_sweep_runs',String(n+1));return n;}catch(e){return 0;}})()")
+		return int(v) if v != null else 0
+	var path := "user://sweep_runs.txt"
+	var n := 0
+	if FileAccess.file_exists(path):
+		n = FileAccess.get_file_as_string(path).to_int()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(str(n + 1))
+	return n
 
 
 func _build_variants() -> void:
@@ -507,6 +528,7 @@ func _finish_all() -> void:
 	result["window_s"] = WINDOW_S
 	result["window_min_frames"] = WINDOW_MIN_FRAMES
 	result["settle_frames"] = SWITCH_SETTLE_FRAMES
+	result["pose_order"] = _poses.duplicate()
 	result["poses"] = _pose_results.duplicate(true)
 	result["notes"] = _notes.duplicate()
 	result["skipped"] = _skipped.duplicate()

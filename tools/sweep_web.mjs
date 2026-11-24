@@ -2,7 +2,8 @@
 // at the phone view (390x844 @ dpr 3, touch) and saves the result panel screenshot + JSON.
 // Uses Stillwater's Chrome launcher (refuses software rendering; uses gpu-run when installed).
 //   BASE=http://127.0.0.1:<port>/ gpu-run node tools/sweep_web.mjs [--out captures/sweep]
-//     [--build s1-sweep2] [--vsync] [--extra '&sweep_poses=trailhead'] [--tag phone]
+//     [--build s2-1] [--vsync] [--extra '&sweep_poses=trailhead'] [--tag phone]
+//     [--prior-runs <n>]  (sweeps already run on this device; odd n runs forest first)
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,7 @@ const BUILD = argVal('--build', '');
 const VSYNC = args.includes('--vsync');
 const EXTRA = argVal('--extra', '');
 const TAG = argVal('--tag', 'phone');
+const PRIOR_RUNS = argVal('--prior-runs', '');
 const BASE = (process.env.BASE || '').replace(/\/?$/, '/');
 if (!process.env.BASE) throw new Error('set BASE to the server for build/web');
 
@@ -36,6 +38,9 @@ try {
   page.on('console', (m) => logs.push(m.text()));
   page.on('pageerror', (e) => logs.push('PAGEERROR ' + e.message));
   await page.setViewport(PHONE);
+  if (PRIOR_RUNS !== '') {
+    await page.evaluateOnNewDocument((n) => localStorage.setItem('sw_sweep_runs', n), PRIOR_RUNS);
+  }
   await page.goto(`${BASE}index.html?bench=sweep${EXTRA}`, { waitUntil: 'load', timeout: 180000 });
   const t0 = Date.now();
   while (!logs.some((l) => l.startsWith('BUILD'))) {
@@ -59,7 +64,7 @@ try {
   fs.writeFileSync(path.join(OUT, `sweep_${TAG}.json`), JSON.stringify(out, null, 2) + '\n');
 
   const noteStr = (sweep.notes || []).length ? `  notes=[${sweep.notes.join(', ')}]` : '';
-  console.log(`\nSWEEP ${sweep.build}  total=${sweep.total_s}s  internal=${sweep.internal.join('x')} of ${sweep.screen.join('x')}  post=${sweep.post}  target=${sweep.target}${noteStr}`);
+  console.log(`\nSWEEP ${sweep.build}  total=${sweep.total_s}s  order=${(sweep.pose_order || []).join(',')}  internal=${sweep.internal.join('x')} of ${sweep.screen.join('x')}  post=${sweep.post}  target=${sweep.target}${noteStr}`);
   for (const p of sweep.poses) {
     console.log(`\n== ${p.pose}  base ${p.base_start_ms} -> ${p.base_end_ms} ms (drift ${p.drift_ms >= 0 ? '+' : ''}${p.drift_ms}, med ${p.base_median_ms}, cpu ${fmtOpt(p.base_raf_cpu_ms, 1)}, raf ${fmtOpt(p.base_raf_iv_ms, 1)}, scr ${p.base_script_ms}, perf_proc ${p.base_perf_proc_ms}, phys ${p.base_phys_ms}, draws=${p.base_draws}, tris=${p.base_tris})`);
     console.log('  variant          med_ms  base_ms  delta_ms  delta_%  raf_cpu  raf_iv    scr   phys   draws    tris  gpu_avg');
