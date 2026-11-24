@@ -28,8 +28,16 @@ const Flags := preload("res://systems/flags.gd")
 const GRASS := {
 	"tile": 8.0, "slot_w": 64, "max_count": 2432, "seed": 1337, "fields": 3,
 	"radius": 30.0, "near": 1664, "far": 1024, "near_lod": 16.0, "far_width": 1.32,
-	"near_tris": 7, "far_tris": 3, "verts_near": 9, "verts_far": 5,
+	"near_tris": 7, "far_tris": 3, "near_segs": 4, "far_segs": 2, "verts_near": 9, "verts_far": 5,
 	# Tile box padding (grass.js boundsPad) and the empty test: ground entirely under water - 1 m.
+	"pad_xz": 1.8, "pad_down": 0.6, "pad_up": 2.5, "empty_below": -1.0,
+}
+# Unified painted grass ring (S3): 192 clumps x 5 wide wedge blades = 960 near (-42.3% vs classic),
+# 3 segments (5 tris, folded into paired tufts when short), dropping 3 of 4 blades to 240 far.
+const GRASS_PAINTED := {
+	"tile": 8.0, "slot_w": 64, "max_count": 960, "seed": 1337, "fields": 3, "clump": 5,
+	"radius": 30.0, "near": 960, "far": 240, "near_lod": 16.0, "far_width": 1.60,
+	"near_tris": 5, "far_tris": 3, "near_segs": 3, "far_segs": 2, "verts_near": 7, "verts_far": 5,
 	"pad_xz": 1.8, "pad_down": 0.6, "pad_up": 2.5, "empty_below": -1.0,
 }
 const FLOWERS := {
@@ -52,6 +60,8 @@ const PAD_ANG := 0.021
 var world: RefCounted
 var grass: Ring
 var flowers: Ring
+var painted := true
+var _grass_scatter_cache := {}
 var _on := true
 # ?probe=terrain turns one ring's updates (and so its bakes) off to test each bake on its own.
 var update_grass := true
@@ -91,17 +101,80 @@ func setup(w: RefCounted) -> void:
 func _ready() -> void:
 	process_priority = 100
 	var t0 := Time.get_ticks_msec()
-	grass = Ring.new(self, GRASS, "res://shaders/grass_bake.gdshader", "res://shaders/grass.gdshader", _grass_meshes())
-	grass.draw_mat.set_shader_parameter("lod_start", maxf(8.0, GRASS.near_lod - 6.0))
-	grass.draw_mat.set_shader_parameter("lod_end", GRASS.near_lod)
-	grass.draw_mat.set_shader_parameter("far_count", float(GRASS.far))
-	grass.draw_mat.set_shader_parameter("far_width_scale", GRASS.far_width)
+	painted = Flags.style() != "classic" and Flags.value("grass", "painted").to_lower() != "classic"
+	var cfg := _grass_cfg()
+	var sc := grass_scatter()
+	grass = Ring.new(self, cfg, _grass_bake_shader(), _grass_draw_shader(), sc, _grass_meshes(sc, cfg))
+	_apply_grass_params(cfg, sc)
+	var fm := _flower_mesh()
+	var fsc: Dictionary = VegScatter.generate(FLOWERS.max_count, FLOWERS.tile, FLOWERS.seed)
+	flowers = Ring.new(self, FLOWERS, "res://shaders/flower_bake.gdshader", "res://shaders/flower.gdshader", fsc, [fm, fm])
+	print("GRASS mode=%s built in %d ms: grass near=%d far=%d atlas %s, flower atlas %s" % [
+		grass_mode(), Time.get_ticks_msec() - t0, int(cfg.near), int(cfg.far), grass.vp.size, flowers.vp.size])
+
+
+func _grass_cfg() -> Dictionary:
+	return GRASS_PAINTED if painted else GRASS
+
+
+func _grass_bake_shader() -> String:
+	return "res://shaders/grass_bake_painted.gdshader" if painted else "res://shaders/grass_bake.gdshader"
+
+
+func _grass_draw_shader() -> String:
+	return "res://shaders/grass_painted.gdshader" if painted else "res://shaders/grass.gdshader"
+
+
+func grass_mode() -> String:
+	return "painted" if painted else "classic"
+
+
+func is_painted() -> bool:
+	return painted
+
+
+func grass_near_count() -> int:
+	return int(_grass_cfg().near)
+
+
+func grass_far_count() -> int:
+	return int(_grass_cfg().far)
+
+
+func grass_scatter() -> Dictionary:
+	var key := "painted" if painted else "classic"
+	if not _grass_scatter_cache.has(key):
+		if painted:
+			_grass_scatter_cache[key] = VegScatter.generate_painted(GRASS_PAINTED.max_count, GRASS_PAINTED.tile, GRASS_PAINTED.seed, int(GRASS_PAINTED.clump))
+		else:
+			_grass_scatter_cache[key] = VegScatter.generate(GRASS.max_count, GRASS.tile, GRASS.seed)
+	return _grass_scatter_cache[key]
+
+
+func _apply_grass_params(cfg: Dictionary, sc: Dictionary) -> void:
+	if painted:
+		grass.bake_mat.set_shader_parameter("clump_count", int(sc.clumps))
+	grass.draw_mat.set_shader_parameter("lod_start", maxf(8.0, float(cfg.near_lod) - 6.0))
+	grass.draw_mat.set_shader_parameter("lod_end", float(cfg.near_lod))
+	grass.draw_mat.set_shader_parameter("far_count", float(maxi(1, roundi(float(cfg.far) * density))))
+	grass.draw_mat.set_shader_parameter("far_width_scale", float(cfg.far_width))
 	var gdbg := Flags.value("grassdbg")
 	if gdbg == "1" or (Flags.has("grassdbg") and gdbg != "0"):
 		grass.draw_mat.set_shader_parameter("dbg_tallness", 1.0)
-	var fm := _flower_mesh()
-	flowers = Ring.new(self, FLOWERS, "res://shaders/flower_bake.gdshader", "res://shaders/flower.gdshader", [fm, fm])
-	print("GRASS built in %d ms: grass atlas %s, flower atlas %s" % [Time.get_ticks_msec() - t0, grass.vp.size, flowers.vp.size])
+
+
+func set_painted(v: bool) -> void:
+	if v == painted:
+		return
+	painted = v
+	var cfg := _grass_cfg()
+	var sc := grass_scatter()
+	var n_near := maxi(1, roundi(float(cfg.near) * density))
+	var n_far := maxi(1, roundi(float(cfg.far) * density))
+	var meshes := [_blade_mesh(sc, n_near, int(cfg.near_segs), true), _blade_mesh(sc, n_far, int(cfg.far_segs), false)]
+	grass.reconfigure(cfg, _grass_bake_shader(), _grass_draw_shader(), sc, meshes, n_near, n_far)
+	_apply_grass_params(cfg, sc)
+	_cam_valid = false
 
 
 func materials() -> Array[ShaderMaterial]:
@@ -114,10 +187,11 @@ func set_density(f: float) -> void:
 	if is_equal_approx(f, density):
 		return
 	density = f
-	var sc: Dictionary = VegScatter.generate(GRASS.max_count, GRASS.tile, GRASS.seed)
-	var n_near := maxi(1, roundi(GRASS.near * f))
-	var n_far := maxi(1, roundi(GRASS.far * f))
-	grass.set_meshes(_blade_mesh(sc, n_near, 4), _blade_mesh(sc, n_far, 2), n_near, n_far)
+	var cfg := _grass_cfg()
+	var sc := grass_scatter()
+	var n_near := maxi(1, roundi(float(cfg.near) * f))
+	var n_far := maxi(1, roundi(float(cfg.far) * f))
+	grass.set_meshes(_blade_mesh(sc, n_near, int(cfg.near_segs), true), _blade_mesh(sc, n_far, int(cfg.far_segs), false), n_near, n_far)
 	grass.draw_mat.set_shader_parameter("far_count", float(n_far))
 	var fm := _flower_mesh(maxi(1, roundi(FLOWERS.near * f)))
 	flowers.set_meshes(fm, fm, maxi(1, roundi(FLOWERS.near * f)), maxi(1, roundi(FLOWERS.far * f)))
@@ -269,12 +343,11 @@ func update_rings(cam: Camera3D, assume_baked: bool, allow_pad: bool = false) ->
 
 
 # Stillwater's bladeGeometry(segs) for every rank below `count`, merged into one tile mesh.
-func _grass_meshes() -> Array[ArrayMesh]:
-	var sc: Dictionary = VegScatter.generate(GRASS.max_count, GRASS.tile, GRASS.seed)
-	return [_blade_mesh(sc, GRASS.near, 4), _blade_mesh(sc, GRASS.far, 2)]
+func _grass_meshes(sc: Dictionary, cfg: Dictionary) -> Array[ArrayMesh]:
+	return [_blade_mesh(sc, int(cfg.near), int(cfg.near_segs), true), _blade_mesh(sc, int(cfg.far), int(cfg.far_segs), false)]
 
 
-func _blade_mesh(sc: Dictionary, count: int, segs: int) -> ArrayMesh:
+func _blade_mesh(sc: Dictionary, count: int, segs: int, is_near: bool = true) -> ArrayMesh:
 	var verts := PackedVector3Array()
 	var c0 := PackedFloat32Array()
 	var c1 := PackedFloat32Array()
@@ -282,6 +355,7 @@ func _blade_mesh(sc: Dictionary, count: int, segs: int) -> ArrayMesh:
 	var local: PackedFloat32Array = sc.local
 	var rnd: PackedFloat32Array = sc.rnd
 	var per := segs * 2 + 1
+	var near_f := 1.0 if is_near else 0.0
 	for b in count:
 		var base := b * per
 		for i in segs:
@@ -290,7 +364,7 @@ func _blade_mesh(sc: Dictionary, count: int, segs: int) -> ArrayMesh:
 			verts.append(Vector3(0.5, y, 0.0))
 		verts.append(Vector3(0.0, 1.0, 0.0))
 		for v in per:
-			c0.append_array([local[b * 2], local[b * 2 + 1], float(b), 0.0])
+			c0.append_array([local[b * 2], local[b * 2 + 1], float(b), near_f])
 			c1.append_array([rnd[b * 4], rnd[b * 4 + 1], rnd[b * 4 + 2], rnd[b * 4 + 3]])
 		for i in segs - 1:
 			var a := base + i * 2
@@ -359,6 +433,7 @@ class Ring:
 	var slot_tex: ImageTexture
 	var slot_dirty_tex := false
 	var vp: SubViewport
+	var bake_rect: ColorRect
 	var bake_mat: ShaderMaterial
 	var draw_mat: ShaderMaterial
 	var draw_n: SwapMultiMesh
@@ -398,7 +473,7 @@ class Ring:
 	var _pushed_near_n := -1
 	var _pushed_far_n := -1
 
-	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
+	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, sc: Dictionary, meshes: Array) -> void:
 		cfg = c
 		draw_near = cfg.near
 		draw_far = cfg.far
@@ -420,24 +495,7 @@ class Ring:
 		_buf_far_gen.resize(capacity)
 		_buf_far_gen.fill(-1)
 		slot_h = int(ceil(float(cfg.near) / cfg.slot_w))
-		var sc: Dictionary = VegScatter.generate(cfg.max_count, tile, cfg.seed)
-		# Pack scatter and slot tables into RGBA8 bytes rather than RGBAF: WebGL2 without
-		# OES_texture_float_linear (iPhone Safari) downgrades RGBAF to RGBAHalf on creation,
-		# causing ImageTexture.update(slot_img) to fail with a format mismatch and leaving
-		# every grass and flower bake pass discarded.
-		var n_near := int(cfg.near)
-		var sbytes := PackedByteArray()
-		sbytes.resize(n_near * 3 * 4)
-		var packed: PackedInt64Array = sc.packed
-		for i in n_near:
-			for row_i in 3:
-				var w: int = packed[i * 4 + row_i]
-				var o := (row_i * n_near + i) * 4
-				sbytes[o] = w & 255
-				sbytes[o + 1] = (w >> 8) & 255
-				sbytes[o + 2] = (w >> 16) & 255
-				sbytes[o + 3] = (w >> 24) & 255
-		var simg := Image.create_from_data(n_near, 3, false, Image.FORMAT_RGBA8, sbytes)
+		var simg := _scatter_image(sc, int(cfg.near))
 		slot_bytes.resize(capacity * 2 * 4)
 		slot_img = Image.create_from_data(capacity, 2, false, Image.FORMAT_RGBA8, slot_bytes)
 		slot_tex = ImageTexture.create_from_image(slot_img)
@@ -452,8 +510,8 @@ class Ring:
 		vp.disable_3d = true
 		vp.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
 		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-		var rect := ColorRect.new()
-		rect.size = Vector2(vp.size)
+		bake_rect = ColorRect.new()
+		bake_rect.size = Vector2(vp.size)
 		bake_mat = ShaderMaterial.new()
 		bake_mat.shader = load(bake_shader)
 		for k in ["near", "far", "biome"]:
@@ -468,8 +526,8 @@ class Ring:
 		bake_mat.set_shader_parameter("slot_h", slot_h)
 		bake_mat.set_shader_parameter("fields", int(cfg.fields))
 		bake_mat.set_shader_parameter("tile_size", tile)
-		rect.material = bake_mat
-		vp.add_child(rect)
+		bake_rect.material = bake_mat
+		vp.add_child(bake_rect)
 		owner.add_child(vp)
 
 		draw_mat = ShaderMaterial.new()
@@ -489,6 +547,54 @@ class Ring:
 				buf_far[i * 16 + d] = 1.0
 		draw_n = _swap(owner, meshes[0])
 		draw_f = _swap(owner, meshes[1])
+
+	# Pack scatter table into RGBA8 bytes rather than RGBAF: WebGL2 without OES_texture_float_linear
+	# (iPhone Safari) downgrades RGBAF to RGBAHalf and breaks ImageTexture updates.
+	static func _scatter_image(sc: Dictionary, n_near: int) -> Image:
+		var sbytes := PackedByteArray()
+		sbytes.resize(n_near * 3 * 4)
+		var packed: PackedInt64Array = sc.packed
+		for i in n_near:
+			for row_i in 3:
+				var w: int = packed[i * 4 + row_i]
+				var o := (row_i * n_near + i) * 4
+				sbytes[o] = w & 255
+				sbytes[o + 1] = (w >> 8) & 255
+				sbytes[o + 2] = (w >> 16) & 255
+				sbytes[o + 3] = (w >> 24) & 255
+		return Image.create_from_data(n_near, 3, false, Image.FORMAT_RGBA8, sbytes)
+
+	# Runtime mode switch (painted <-> classic) for A/B sweeps without allocating a second ring.
+	func reconfigure(new_cfg: Dictionary, bake_shader: String, draw_shader: String, sc: Dictionary, meshes: Array, n_near: int, n_far: int) -> void:
+		cfg = new_cfg
+		slot_h = int(ceil(float(cfg.near) / cfg.slot_w))
+		var new_size := Vector2i(cols * int(cfg.slot_w) * int(cfg.fields), rows * slot_h)
+		if vp.size != new_size:
+			vp.size = new_size
+			bake_rect.size = Vector2(new_size)
+		bake_mat.shader = load(bake_shader)
+		bake_mat.set_shader_parameter("scatter_tex", ImageTexture.create_from_image(_scatter_image(sc, int(cfg.near))))
+		bake_mat.set_shader_parameter("slot_h", slot_h)
+		draw_mat.shader = load(draw_shader)
+		draw_mat.set_shader_parameter("atlas", vp.get_texture())
+		set_meshes(meshes[0], meshes[1], n_near, n_far)
+		by_key.clear()
+		baking_n = 0
+		for s in slots:
+			var idx_s: int = s.i
+			s.sx = (idx_s % cols) * int(cfg.slot_w) * int(cfg.fields)
+			s.sy = (idx_s / cols) * slot_h
+			s.key = null
+			s.baking = false
+			s.ready = false
+			s.empty = false
+			_write_slot(s)
+		_ring_valid = false
+		_has_missing = true
+		_buf_near_gen.fill(-1)
+		_buf_far_gen.fill(-1)
+		_pushed_near_n = -1
+		_pushed_far_n = -1
 
 	func set_meshes(near_mesh: ArrayMesh, far_mesh: ArrayMesh, n_near: int, n_far: int) -> void:
 		near_mesh.surface_set_material(0, draw_mat)

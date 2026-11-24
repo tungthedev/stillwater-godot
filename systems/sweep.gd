@@ -71,9 +71,11 @@ var _base_post := true
 var _base_style := "painterly"
 var _base_ground_live := false
 var _base_grass := true
+var _base_grass_painted := true
 var _base_trees := true
 var _base_clouds := true
 var _base_shadow := false
+var _prev_rebaked_grass := false
 
 
 func _ready() -> void:
@@ -119,6 +121,7 @@ func start() -> void:
 	_base_style = env_sys.style
 	_base_ground_live = terrain_sys.live_override
 	_base_grass = grass_sys.is_on()
+	_base_grass_painted = grass_sys.is_painted()
 	_base_trees = trees_sys.is_on()
 	_base_clouds = clouds_sys.is_on()
 	_base_shadow = env_sys.sun != null and env_sys.sun.shadow_enabled
@@ -189,6 +192,10 @@ func _build_variants() -> void:
 		_variants.append({"id": "veg_off", "label": "all veg off", "disjoint": false})
 	if _base_grass:
 		_variants.append({"id": "grass_off", "label": "grass off", "disjoint": true})
+		if _base_grass_painted:
+			_variants.append({"id": "grass_classic", "label": "grass classic", "disjoint": false})
+		else:
+			_variants.append({"id": "grass_painted", "label": "grass painted", "disjoint": false})
 		_variants.append({"id": "flowers_off", "label": "flowers off", "disjoint": true})
 	else:
 		_skipped.append("grass_off (base grass off)")
@@ -238,6 +245,7 @@ func _reset_to_base() -> void:
 	terrain_sys.set_live(_base_ground_live)
 	terrain_sys.set_painterly(_base_style != "classic")
 	grass_sys.set_on(_base_grass)
+	grass_sys.set_painted(_base_grass_painted)
 	grass_sys.set_grass_on(true)
 	grass_sys.set_flowers_on(true)
 	trees_sys.set_on(_base_trees)
@@ -289,6 +297,10 @@ func _apply_variant(id: String) -> void:
 			trees_sys.set_impostors_on(false)
 		"grass_off":
 			grass_sys.set_grass_on(false)
+		"grass_classic":
+			grass_sys.set_painted(false)
+		"grass_painted":
+			grass_sys.set_painted(true)
 		"flowers_off":
 			grass_sys.set_flowers_on(false)
 		"trees_off":
@@ -309,11 +321,13 @@ func _apply_variant(id: String) -> void:
 			post.set_painterly(false)
 			clouds_sys.set_painterly(false)
 			terrain_sys.set_painterly(false)
+			grass_sys.set_painted(false)
 		"style_painterly":
 			env_sys.set_style("painterly")
 			post.set_painterly(true)
 			clouds_sys.set_painterly(true)
 			terrain_sys.set_painterly(true)
+			grass_sys.set_painted(true)
 
 
 func _begin_pose() -> void:
@@ -333,10 +347,13 @@ func _begin_pose() -> void:
 
 func _begin_step(is_pose_warmup: bool) -> void:
 	var step: Dictionary = _schedule[_step_i]
+	var prev_painted: bool = grass_sys.is_painted()
 	_apply_variant(step.id)
+	var rebaked_grass: bool = grass_sys.is_painted() != prev_painted
 	_measuring = false
 	_warm = 0
-	var long_settle: bool = is_pose_warmup or str(step.id) == "ground_baked"
+	var long_settle: bool = is_pose_warmup or str(step.id) == "ground_baked" or rebaked_grass or _prev_rebaked_grass
+	_prev_rebaked_grass = rebaked_grass
 	_settle_s = POSE_WARMUP_S if long_settle else SWITCH_SETTLE_S
 	_settle_frames = POSE_WARMUP_FRAMES if long_settle else SWITCH_SETTLE_FRAMES
 	_t0_us = Time.get_ticks_usec()

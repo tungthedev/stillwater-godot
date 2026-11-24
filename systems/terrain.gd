@@ -63,6 +63,7 @@ var flat_mat: ShaderMaterial
 var flat_on := false
 var live_override := false
 var painterly := true
+var painted_ground := true
 var on := true
 var frozen := false
 
@@ -155,6 +156,7 @@ func _ready() -> void:
 	process_priority = 100
 	live_override = Flags.value("ground", "baked").to_lower() == "live"
 	painterly = Flags.style() != "classic"
+	painted_ground = painterly and Flags.value("grass", "painted").to_lower() != "classic"
 
 	mat = _make_world_mat("res://shaders/terrain.gdshader")
 	# ?dbg_terrain=<bits>: the ?probe=terrain switches in the real game, to confirm a probe finding.
@@ -174,6 +176,7 @@ func _ready() -> void:
 	baked_mat.set_shader_parameter("ground_fade_start", GROUND_FADE_START)
 	baked_mat.set_shader_parameter("ground_fade_end", GROUND_FADE_END)
 	baked_mat.set_shader_parameter("valley_ready", 0.0)
+	baked_mat.set_shader_parameter("painted_ground", 1.0 if painted_ground else 0.0)
 	baked_mat.set_shader_parameter("dbg_terrain", int(Flags.value("dbg_terrain", "0")))
 
 	far_mat = _make_world_mat("res://shaders/terrain_far.gdshader")
@@ -285,6 +288,7 @@ func _setup_bakers() -> void:
 	valley_mat.shader = load("res://shaders/valley_bake.gdshader")
 	_bind_bake_world(valley_mat)
 	valley_mat.set_shader_parameter("valley_res", float(VALLEY_RES))
+	valley_mat.set_shader_parameter("painted_ground", 1.0 if painted_ground else 0.0)
 	vrect.material = valley_mat
 	valley_vp.add_child(vrect)
 	add_child(valley_vp)
@@ -308,6 +312,7 @@ func _setup_bakers() -> void:
 		_bind_bake_world(bm)
 		bm.set_shader_parameter("tile_size", GROUND_TILE)
 		bm.set_shader_parameter("slot_use", GROUND_SLOT_USE)
+		bm.set_shader_parameter("painted_ground", 1.0 if painted_ground else 0.0)
 		r.material = bm
 		ground_vp.add_child(r)
 		_bake_rects.append(r)

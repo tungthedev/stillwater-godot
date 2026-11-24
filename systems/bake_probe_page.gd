@@ -337,10 +337,10 @@ func _check_grass_tile(a_row0: int) -> Dictionary:
 	var ih := img.get_height()
 	var flip_y := a_row0 > 0
 
-	var sc: Dictionary = VegScatter.generate(grass_sys.GRASS.max_count, grass_sys.GRASS.tile, grass_sys.GRASS.seed)
+	var sc: Dictionary = grass_sys.grass_scatter()
 	var local: PackedFloat32Array = sc.local
-	var n_blades: int = int(grass_sys.GRASS.near)
-	var slot_w: int = int(grass_sys.GRASS.slot_w)
+	var n_blades: int = grass_sys.grass_near_count()
+	var slot_w: int = int(grass_sys.grass.cfg.slot_w)
 	var sx: int = int(slot.sx)
 	var sy: int = int(slot.sy)
 	var flips: int = int(slot.flips)

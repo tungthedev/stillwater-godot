@@ -41,6 +41,7 @@ const PAINTERLY_TRICKS: Array[String] = [
 	"card_edge_fade",
 	"cheap_bark",
 	"puff_mid_crowns",
+	"painted_grass",
 ]
 
 var style := "painterly"

@@ -239,6 +239,7 @@ func settings() -> Dictionary:
 		"trees": trees_sys.is_on(),
 		"style": env_sys.style,
 		"ground": terrain_sys.ground_mode(),
+		"grass_mode": grass_sys.grass_mode(),
 		"style_tricks": env_sys.active_tricks(),
 		"frame_cap": "rAF (display rate, 60 on iPhone)" if OS.has_feature("web") else "none (vsync off)",
 	}

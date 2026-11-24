@@ -29,6 +29,8 @@ struct VegTexel {
 	int field;
 	int rank;
 	vec2 xz;
+	vec2 tile_origin;
+	int flips;
 	vec4 rnd;
 	float base_h;
 };
@@ -61,7 +63,9 @@ bool veg_texel(vec2 frag, out VegTexel t) {
 	) / 65535.0;
 	if ((flags & 1) != 0) local.x = tile_size - local.x;
 	if ((flags & 2) != 0) local.y = tile_size - local.y;
-	t.xz = tile_ij * tile_size + local;
+	t.tile_origin = tile_ij * tile_size;
+	t.flips = flags & 3;
+	t.xz = t.tile_origin + local;
 	t.base_h = (s1.y + s1.z * 256.0 + s1.w * 65536.0) / 1024.0 - 1024.0;
 	return true;
 }

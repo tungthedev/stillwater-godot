@@ -33,6 +33,7 @@ uniform vec2 ground_atlas_size = vec2(1536.0);
 uniform float ground_fade_start = 40.0;
 uniform float ground_fade_end = 54.0;
 uniform float valley_ready = 0.0;
+uniform float painted_ground = 1.0;
 
 varying vec3 v_wpos;
 varying vec3 v_direct;
@@ -154,14 +155,17 @@ void fragment() {
 
 	// ---- crisp painted meadow & turf variation ----
 	if (mid_k > 0.001 && ff < 0.99) {
+		// Inside the near painted-grass ring, keep per-pixel turf variation restrained so the
+		// baked 4-tone strokes stay cohesive with the clumped grass bases.
+		float paint_calm = painted_ground > 0.5 ? (1.0 - near_k * 0.65) : 1.0;
 		float g_cool_f = n_mid.g * 0.62 + n_mid.b * 0.24 + n_hi.r * 0.14;
 		float fw_g = clamp(fwidth(g_cool_f) * 1.1, 0.02, 0.16);
 		float g_cool = smoothstep(0.54 - fw_g, 0.54 + fw_g, g_cool_f);
 		float g_warm = smoothstep(0.56 - fw_g, 0.56 + fw_g, (1.0 - n_mid.g) * 0.62 + n_mid.b * 0.24 + n_hi.r * 0.14);
-		vec3 g_col = mix(albedo, albedo * vec3(0.64, 0.84, 0.72), g_cool * 0.42 * hi_k);
-		g_col = mix(g_col, g_col * vec3(1.18, 1.10, 0.76), g_warm * 0.34 * hi_k);
-		g_col *= 1.0 + (n_mid.b - 0.5) * 0.20 * mid_k + (n_hi.b - 0.5) * 0.24 * hi_k;
-		float soil_p = smoothstep(0.76, 0.88, n_hi.a) * smoothstep(0.46, 0.74, n_mid.r) * hi_k;
+		vec3 g_col = mix(albedo, albedo * vec3(0.64, 0.84, 0.72), g_cool * 0.42 * hi_k * paint_calm);
+		g_col = mix(g_col, g_col * vec3(1.18, 1.10, 0.76), g_warm * 0.34 * hi_k * paint_calm);
+		g_col *= 1.0 + (n_mid.b - 0.5) * 0.18 * mid_k * paint_calm + (n_hi.b - 0.5) * 0.18 * hi_k * (0.45 + 0.55 * paint_calm);
+		float soil_p = smoothstep(0.76, 0.88, n_hi.a) * smoothstep(0.46, 0.74, n_mid.r) * hi_k * paint_calm;
 		g_col = mix(g_col, vec3(0.16, 0.15, 0.08), soil_p * 0.42);
 		float fl_k = v_bio.y * hi_k;
 		if (fl_k > 0.005) {

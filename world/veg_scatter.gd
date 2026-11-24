@@ -100,3 +100,82 @@ static func _q16(u: float) -> int:
 static func flip_bits(tx: int, tz: int) -> Vector2i:
 	var h := (imul(tx, 374761393) ^ imul(tz, 668265263)) & M32
 	return Vector2i((h >> 16) & 1, (h >> 17) & 1)
+
+
+# Painted grass scatter: tight clumps of `clump_k` blades fanning outward from shared roots
+# placed on a shuffled jittered grid. Ranks are interleaved by blade-within-clump
+# (rank = j * clumps + c), so rank 0..clumps-1 holds blade 0 of every clump (the clump centre
+# sampled by grass_bake_painted.gdshader) and any mid-distance prefix (e.g. 1 of 4 blades)
+# keeps every clump represented with no bare gaps.
+static func generate_painted(count: int, size: float, seed: int, clump_k: int = 5) -> Dictionary:
+	var clumps := maxi(1, count / clump_k)
+	var total := clumps * clump_k
+	var rng := PackedInt64Array([(seed ^ 0x517cc1b7) & M32])
+	var side := int(ceil(sqrt(float(clumps))))
+	var cell := size / side
+	var c_x := PackedFloat32Array()
+	var c_z := PackedFloat32Array()
+	c_x.resize(clumps)
+	c_z.resize(clumps)
+	for c in clumps:
+		var gx := c % side
+		var gz := c / side
+		var ox := (gx + 0.5 + (rnd_next(rng) - 0.5) * 0.94) * cell
+		var oz := (gz + 0.5 + (rnd_next(rng) - 0.5) * 0.94) * cell
+		c_x[c] = fmod(fmod(ox, size) + size, size)
+		c_z[c] = fmod(fmod(oz, size) + size, size)
+	var order := PackedInt32Array()
+	order.resize(clumps)
+	for c in clumps:
+		order[c] = c
+	for i in range(clumps - 1, 0, -1):
+		var j := int(floor(rnd_next(rng) * (i + 1)))
+		var tmp := order[i]
+		order[i] = order[j]
+		order[j] = tmp
+	var local := PackedFloat32Array()
+	var rnd := PackedFloat32Array()
+	var packed := PackedInt64Array()
+	local.resize(total * 2)
+	rnd.resize(total * 4)
+	packed.resize(total * 4)
+	for ci in clumps:
+		var src := order[ci]
+		var ax := c_x[src]
+		var az := c_z[src]
+		var a0 := rnd_next(rng) * TAU
+		var cr := 0.08 + rnd_next(rng) * 0.15
+		var clump_w := rnd_next(rng)
+		for j in clump_k:
+			var ang: float
+			var rad: float
+			if j == 0:
+				ang = a0 + (rnd_next(rng) - 0.5) * 0.45
+				rad = cr * 0.18
+			else:
+				ang = a0 + float(j) * (TAU / clump_k) + (rnd_next(rng) - 0.5) * 0.75
+				rad = cr * (0.45 + 0.55 * rnd_next(rng))
+			var ox := fmod(fmod(ax + cos(ang) * rad, size) + size, size)
+			var oz := fmod(fmod(az + sin(ang) * rad, size) + size, size)
+			var r0 := rnd_next(rng)
+			var r1 := rnd_next(rng)
+			var r2 := fmod(fmod(ang / TAU, 1.0) + 1.0, 1.0)
+			var r3 := clump_w
+			var rank := j * clumps + ci
+			var ux := _q16(ox / size)
+			var uz := _q16(oz / size)
+			var q0 := _q16(r0)
+			var q1 := _q16(r1)
+			var q2 := _q16(r2)
+			var q3 := _q16(r3)
+			local[rank * 2] = ux / 65535.0 * size
+			local[rank * 2 + 1] = uz / 65535.0 * size
+			rnd[rank * 4] = q0 / 65535.0
+			rnd[rank * 4 + 1] = q1 / 65535.0
+			rnd[rank * 4 + 2] = q2 / 65535.0
+			rnd[rank * 4 + 3] = q3 / 65535.0
+			packed[rank * 4] = ux | (uz << 16)
+			packed[rank * 4 + 1] = q0 | (q1 << 16)
+			packed[rank * 4 + 2] = q2 | (q3 << 16)
+			packed[rank * 4 + 3] = 0
+	return {"local": local, "rnd": rnd, "packed": packed, "clumps": clumps}
