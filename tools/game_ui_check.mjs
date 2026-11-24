@@ -2,6 +2,8 @@
 // (390x844@3, iPhone user agent) except where noted. Control positions and state come from
 // window.__ui, which systems/walk_log.gd publishes under ?walklog. Cases:
 //   pause_freeze  Trail on, pause for 5 s: the walker must not move while the sheet is up.
+//   hud_buttons   single-touch taps on Sit/Stand, Trail and Pause fire once each, and second-finger
+//                 taps on Sit, Stand, Trail and Pause work while the stick thumb stays held.
 //   two_thumbs    stick and look at once, then lift only the look thumb: distance and yaw both
 //                 change, and the stick keeps walking after the other thumb lifts.
 //   perf_bench    pause, Perf, flip the Grass lever, then Bench: the bench runs from the game page,
@@ -25,7 +27,7 @@ if (!process.env.BASE) throw new Error('set BASE to the server for build/web');
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
 const LAND = { width: 844, height: 390, deviceScaleFactor: 3, isMobile: true, hasTouch: true, isLandscape: true };
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1';
-const ALL = ['pause_freeze', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas'];
+const ALL = ['pause_freeze', 'hud_buttons', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas'];
 const CASES = argVal('--cases', ALL.join(',')).split(',');
 
 const { launchBrowser } = await import(pathToFileURL(path.join(SW, 'tools/chrome.mjs')).href);
@@ -114,6 +116,100 @@ try {
     u = await p.fresh();
     check(!u.paused, 'tap resumed');
     check(u.distance - d2 > 2, `walk carried on after resume (${(u.distance - d2).toFixed(2)} m in ~2.4 s)`);
+    await p.page.close();
+  });
+
+  if (CASES.includes('hud_buttons')) await run('hud_buttons', async (check, r) => {
+    const p = await open(PHONE);
+    let u = await p.start();
+    const center = (rect, what) => {
+      if (!rect || !rect.length) throw new Error(`${what} not on screen`);
+      return [rect[0] + rect[2] / 2, rect[1] + rect[3] / 2];
+    };
+    // Single-touch tap on Sit -> Stand -> Trail on/off -> Pause/Resume (each must fire once).
+    await p.tapRect(u.sit_btn, 'Sit button');
+    u = await p.fresh();
+    check(u.sitting && u.sit_text === 'STAND', `single tap Sit engaged sitting (sitting=${u.sitting}, label=${u.sit_text})`);
+    await p.tapRect(u.sit_btn, 'Stand button');
+    u = await p.fresh();
+    check(!u.sitting && u.sit_text === 'SIT', `single tap Stand stood up (sitting=${u.sitting}, label=${u.sit_text})`);
+    await p.tapRect(u.trail_btn, 'Trail button');
+    u = await p.fresh();
+    check(u.auto_walk, 'single tap Trail turned auto-walk on');
+    await p.tapRect(u.trail_btn, 'Trail button');
+    u = await p.fresh();
+    check(!u.auto_walk, 'single tap Trail turned auto-walk off');
+    await p.tapRect(u.pause_btn, 'Pause button');
+    u = await p.fresh();
+    check(u.paused, 'single tap Pause paused');
+    await p.tapRect(u.resume_btn, 'Resume button');
+    u = await p.fresh();
+    check(!u.paused, 'single tap Resume resumed');
+
+    // Stick thumb held (id 1) + second finger (id 2) taps Sit -> must sit and stop moving.
+    const W = PHONE.width, H = PHONE.height;
+    const sx = W * 0.25, sy = H * 0.72;
+    const d0 = u.distance;
+    await p.touch('touchStart', [[1, sx, sy]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[1, sx, sy - i * 6]]); await sleep(16); }
+    await sleep(1400);
+    u = await p.fresh();
+    check(u.distance - d0 > 1.0, `stick walked before second-finger Sit (${(u.distance - d0).toFixed(2)} m)`);
+    const [sitX, sitY] = center(u.sit_btn, 'Sit button');
+    await p.touch('touchStart', [[1, sx, sy - 48], [2, sitX, sitY]]);
+    await sleep(80);
+    await p.touch('touchEnd', [[2, sitX, sitY]]);
+    u = await p.fresh();
+    r.shots.push(await p.shot('hud_buttons_stick_sit'));
+    check(u.sitting && u.sit_text === 'STAND', `second-finger tap Sit while holding stick sat down (sitting=${u.sitting}, label=${u.sit_text})`);
+    const dSit = u.distance;
+    await sleep(1800);
+    u = await p.fresh();
+    check(u.distance - dSit < 0.5, `walker stopped after sitting while stick stayed held (moved ${(u.distance - dSit).toFixed(2)} m)`);
+    // Stand back up with second finger while stick is still held.
+    const [standX, standY] = center(u.sit_btn, 'Stand button');
+    await p.touch('touchStart', [[1, sx, sy - 48], [2, standX, standY]]);
+    await sleep(80);
+    await p.touch('touchEnd', [[2, standX, standY]]);
+    u = await p.fresh();
+    check(!u.sitting && u.sit_text === 'SIT', `second-finger tap Stand stood up (sitting=${u.sitting}, label=${u.sit_text})`);
+    await p.touch('touchEnd', []);
+    await sleep(300);
+
+    // Stick thumb held (id 1) + second finger (id 2) taps Trail -> auto-walk turns on.
+    u = await p.fresh();
+    await p.touch('touchStart', [[1, sx, sy]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[1, sx, sy - i * 6]]); await sleep(16); }
+    await sleep(600);
+    u = await p.fresh();
+    const [trailX, trailY] = center(u.trail_btn, 'Trail button');
+    await p.touch('touchStart', [[1, sx, sy - 48], [2, trailX, trailY]]);
+    await sleep(80);
+    await p.touch('touchEnd', [[2, trailX, trailY]]);
+    u = await p.fresh();
+    check(u.auto_walk, 'second-finger tap Trail while holding stick turned auto-walk on');
+    await p.touch('touchEnd', []);
+    const dRel = (await p.fresh()).distance;
+    await sleep(1600);
+    u = await p.fresh();
+    check(u.distance - dRel > 1.5, `auto-walk carried on after stick lifted (${(u.distance - dRel).toFixed(2)} m)`);
+    await p.tapRect(u.trail_btn, 'Trail button off');
+
+    // Stick thumb held (id 1) + second finger (id 2) taps Pause -> pauses cleanly.
+    u = await p.fresh();
+    await p.touch('touchStart', [[1, sx, sy]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[1, sx, sy - i * 6]]); await sleep(16); }
+    await sleep(300);
+    u = await p.fresh();
+    const [pauseX, pauseY] = center(u.pause_btn, 'Pause button');
+    await p.touch('touchStart', [[1, sx, sy - 48], [2, pauseX, pauseY]]);
+    await sleep(80);
+    await p.touch('touchEnd', [[2, pauseX, pauseY]]);
+    u = await p.fresh();
+    check(u.paused, 'second-finger tap Pause while holding stick paused');
+    await p.touch('touchEnd', []);
+    const errs = p.logs.filter((l) => /SCRIPT ERROR|PAGEERROR|ERROR:/.test(l));
+    check(errs.length === 0, `no errors (${errs.slice(0, 3).join(' | ')})`);
     await p.page.close();
   });
 

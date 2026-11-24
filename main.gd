@@ -98,6 +98,7 @@ func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: 
 	hud.name = "hud"
 	hud.set_script(load("res://systems/hud.gd"))
 	hud.visible = not (Flags.has("noui") or Flags.has("no-ui"))
+	hud.blockers = [ui.grid, ui.panel]
 	add_child(hud)
 	var session := Node.new()
 	session.name = "session"

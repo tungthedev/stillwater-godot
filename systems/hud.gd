@@ -70,6 +70,9 @@ var _breathe := 0.0
 var _hud_on := true
 var _hud_live := false
 var _btn_key := []
+var blockers: Array[Control] = []
+var _touch_btns := {}
+var _touch_fire_ms := {}
 
 
 func _ready() -> void:
@@ -86,6 +89,77 @@ func _ready() -> void:
 	_build_paused()
 	get_tree().root.size_changed.connect(_layout)
 	_layout()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_touch_btns.clear()
+
+
+# Direct ScreenTouch hit-testing for every on-screen game button across all touch indices.
+# Godot only emulates mouse events for the first touch, so a second finger tapping a button
+# while another thumb holds the stick would otherwise miss Button.pressed and fall through to
+# look/stick input. Touch-emulated mouse clicks on these buttons are suppressed in _guard_button
+# so finger 0 never fires a button twice while desktop mouse clicks keep using Button.pressed.
+func _input(e: InputEvent) -> void:
+	if e is InputEventScreenTouch:
+		if e.pressed:
+			if _is_blocked(e.position):
+				return
+			for entry in _active_touch_buttons():
+				var b: Button = entry.btn
+				if b.is_visible_in_tree() and b.get_global_rect().has_point(e.position):
+					_touch_btns[e.index] = entry
+					get_viewport().set_input_as_handled()
+					return
+		elif _touch_btns.has(e.index):
+			var entry: Dictionary = _touch_btns[e.index]
+			_touch_btns.erase(e.index)
+			get_viewport().set_input_as_handled()
+			var b: Button = entry.btn
+			if not e.canceled and b.is_visible_in_tree() and b.get_global_rect().grow(16.0).has_point(e.position):
+				_touch_fire_ms[b] = Time.get_ticks_msec()
+				entry.cb.call()
+	elif e is InputEventScreenDrag and _touch_btns.has(e.index):
+		get_viewport().set_input_as_handled()
+
+
+func _is_blocked(pos: Vector2) -> bool:
+	for c in blockers:
+		if c == null or not c.is_visible_in_tree():
+			continue
+		var p := c.get_parent()
+		if p is CanvasLayer and not (p as CanvasLayer).visible:
+			continue
+		if c.get_global_rect().has_point(pos):
+			return true
+	return false
+
+
+func _active_touch_buttons() -> Array[Dictionary]:
+	if not visible:
+		return []
+	if paused_layer.is_visible_in_tree():
+		return [
+			{"btn": dev_btn, "cb": func() -> void: button.emit("dev")},
+			{"btn": resume_btn, "cb": func() -> void: resume_pressed.emit()},
+		]
+	if title.mouse_filter == Control.MOUSE_FILTER_STOP:
+		return []
+	if touch_layer.is_visible_in_tree():
+		var out: Array[Dictionary] = [{"btn": pause_btn, "cb": func() -> void: button.emit("pause")}]
+		for act in btn:
+			var a: String = act
+			out.append({"btn": btn[a], "cb": func() -> void: button.emit(a)})
+		return out
+	return []
+
+
+func _guard_button(b: Button) -> void:
+	b.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton:
+			if e.device == InputEvent.DEVICE_ID_EMULATION or Time.get_ticks_msec() - int(_touch_fire_ms.get(b, -10000)) < 500:
+				b.accept_event())
 
 
 # ---------- fonts ----------
@@ -344,6 +418,8 @@ func show_hud(on: bool) -> void:
 	_hud_live = on
 	_fade(hud, 1.0 if on and _hud_on else 0.0, 1.2)
 	touch_layer.visible = on and touch
+	if not on:
+		_touch_btns.clear()
 
 
 # H: photo mode.
@@ -408,6 +484,7 @@ func _tbtn(text: String, act: String) -> Button:
 	b.add_theme_font_override("font", _font(SANS, 500, 11, 0.14))
 	b.add_theme_font_size_override("font_size", 11)
 	_tbtn_state(b, false, false)
+	_guard_button(b)
 	b.pressed.connect(func() -> void: button.emit(act))
 	return b
 
@@ -470,6 +547,7 @@ func _build_paused() -> void:
 	resume_btn = Button.new()
 	resume_btn.focus_mode = Control.FOCUS_NONE
 	resume_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_guard_button(resume_btn)
 	resume_btn.pressed.connect(func() -> void: resume_pressed.emit())
 	dev_btn = Button.new()
 	dev_btn.text = "PERF · BENCH"
@@ -486,6 +564,7 @@ func _build_paused() -> void:
 		dev_btn.add_theme_stylebox_override(st, dsb)
 	for st in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
 		dev_btn.add_theme_color_override(st, DIM)
+	_guard_button(dev_btn)
 	dev_btn.pressed.connect(func() -> void: button.emit("dev"))
 	for c in [paused_h, _spacer(), paused_keys, _spacer(), dev_btn, _spacer(), resume_btn]:
 		paused_box.add_child(c)
@@ -499,6 +578,7 @@ func _on_paused_input(e: InputEvent) -> void:
 
 func set_paused(on: bool) -> void:
 	paused_layer.visible = on
+	_touch_btns.clear()
 
 
 func _set_paused_keys(lines: Array) -> void:
@@ -794,6 +874,7 @@ func update(s: Dictionary) -> void:
 			_tbtn_state(btn.sit, s.sitting, not s.sitting and s.bench)
 			btn.sit.text = "STAND" if s.sitting else "SIT"
 			_tbtn_state(btn.autoWalk, s.auto_walk, false)
+			_place_actions.call_deferred()
 		set_prompt("Tap Stand" if s.sitting else ("Tap Sit to rest" if s.bench else ""))
 	else:
 		set_prompt("E · stand up" if s.sitting else ("E · sit and rest" if s.bench else ""))
