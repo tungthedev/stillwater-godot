@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "s2-3"
+const BUILD := "s2-4"
 
 
 func _ready() -> void:
@@ -47,11 +47,15 @@ func _ready() -> void:
 	scene.add_child(env_sys)
 	env_sys.set_sky(world.sky_lut_tex, world.noise_tex)
 	var terrain_sys := _add(scene, "terrain", world)
+	# Keep all no-discard opaque surfaces (live, baked, far terrain) ahead of discard surfaces
+	# for Apple TBDR HSR without touching systems/terrain.gd.
 	for m in terrain_sys.materials():
+		m.render_priority = -1
 		env_sys.apply_to(m)
 	var clouds_sys := _add(scene, "clouds", world)
 	for m in clouds_sys.materials():
 		env_sys.apply_to(m)
+	env_sys.set_sky_clouds_on(not clouds_sys.is_billboard_on())
 	var trees_sys := _add(scene, "trees", world)
 	for m in trees_sys.materials():
 		env_sys.apply_to(m)

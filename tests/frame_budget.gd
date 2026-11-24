@@ -68,7 +68,7 @@ func _init() -> void:
 			trees.count_drawn(cam)
 			grass.update_rings(cam, true)
 			var tris: int = nodes * terrain.tris_per_node + trees.last_tris + grass.last_tris + clouds.tris + OTHER_TRIS
-			var draws: int = terrain.last_draws + trees.last_draws + grass.last_draws + 1 + OTHER_DRAWS
+			var draws: int = terrain.last_draws + trees.last_draws + grass.last_draws + clouds.last_draws + OTHER_DRAWS
 			var pass_: bool = tris <= TRIS and draws <= DRAWS and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
 			ok = ok and pass_
 			print("budget %s %dx%d: terrain %d + trees %d + grass %d + clouds %d = %d triangles, %d draws (trees %d, grass %d; hero %d, mid %d, impostor %d trees; grass tiles %d near + %d far, flower tiles %d) %s" % [

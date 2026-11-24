@@ -189,18 +189,20 @@ func _load_assets() -> void:
 
 	var opaque_shader: Shader = load("res://shaders/tree_opaque.gdshader")
 	var card_shader: Shader = load("res://shaders/tree.gdshader")
+	# Opaque materials draw at priority -1 and discard materials at +1 so Apple TBDR HSR never
+	# interleaves opaque geometry with alpha-tested leaf cards or impostors.
 	hero_opaque_mat = ShaderMaterial.new()
 	hero_opaque_mat.shader = opaque_shader
 	hero_opaque_mat.render_priority = -1
 	hero_card_mat = ShaderMaterial.new()
 	hero_card_mat.shader = card_shader
-	hero_card_mat.render_priority = 0
+	hero_card_mat.render_priority = 1
 	mid_opaque_mat = ShaderMaterial.new()
 	mid_opaque_mat.shader = opaque_shader
 	mid_opaque_mat.render_priority = -1
 	mid_card_mat = ShaderMaterial.new()
 	mid_card_mat.shader = card_shader
-	mid_card_mat.render_priority = 0
+	mid_card_mat.render_priority = 1
 
 	for mat in [hero_opaque_mat, mid_opaque_mat]:
 		mat.set_shader_parameter("biome_tex", world.texture("biome"))
@@ -214,6 +216,7 @@ func _load_assets() -> void:
 
 	imp_mat = ShaderMaterial.new()
 	imp_mat.shader = load("res://shaders/tree_impostor.gdshader")
+	imp_mat.render_priority = 1
 	imp_mat.set_shader_parameter("imp_albedo", ImageTexture.create_from_image(alb))
 	imp_mat.set_shader_parameter("imp_normal", ImageTexture.create_from_image(nrm))
 	var frames := PackedVector4Array()

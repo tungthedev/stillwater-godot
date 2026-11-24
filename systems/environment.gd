@@ -68,6 +68,7 @@ var mats: Array[ShaderMaterial] = []
 var post_on := false
 var sky_flat := false
 var cirrus_on := true
+var sky_clouds_on := true
 var frozen := false
 
 
@@ -126,6 +127,8 @@ func _ready() -> void:
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.radiance_size = Sky.RADIANCE_SIZE_32
+	# Keep sky process mode static so Godot never treats the sky as real-time radiance work.
+	sky.process_mode = Sky.PROCESS_MODE_QUALITY
 	env = Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.background_color = Color(0.32, 0.56, 0.88)
@@ -200,6 +203,12 @@ func set_cirrus_on(on: bool) -> void:
 		sky_mat.set_shader_parameter("cirrus_on", 1.0 if on else 0.0)
 
 
+func set_sky_clouds_on(on: bool) -> void:
+	sky_clouds_on = on
+	if sky_mat != null:
+		sky_mat.set_shader_parameter("sky_clouds_on", 1.0 if on else 0.0)
+
+
 func set_style(s: String) -> void:
 	style = "classic" if s == "classic" else "painterly"
 	painterly = style != "classic"
@@ -220,7 +229,9 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 	sky_mat.set_shader_parameter("noise_tex", noise)
 	sky_mat.set_shader_parameter("cloud_offset", Vector2(-223.16, -143.45))
 	sky_mat.set_shader_parameter("wind_dir", Vector2(0.8253, 0.5646))
+	sky_mat.set_shader_parameter("cloud_cover", 0.329)
 	sky_mat.set_shader_parameter("cirrus_on", 1.0 if cirrus_on else 0.0)
+	sky_mat.set_shader_parameter("sky_clouds_on", 1.0 if sky_clouds_on else 0.0)
 	apply_to(sky_mat)
 
 
