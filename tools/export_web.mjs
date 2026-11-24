@@ -11,7 +11,9 @@
 //   far.pngdata    2048^2 RGB8: r,g,b = u24 height code (lo, mid, hi)
 //   biome.pngdata  512^2  RGB8: forest, flowers, meadow (as biome_rgb.u8)
 //   noise.pngdata  512^2  RGBA8: Stillwater's tileable fbm/worley detail noise (noiseTex.js), baked
-//   meta.json      decode rules, poses and a thinned trail for the walk camera
+//   colliders.bin  every canonical non-bush tree (all tiers collide alike), bucketed by 32 m cell
+//   meta.json      decode rules, poses, a thinned trail for the walk camera, and the game's
+//                  trail, places, benches and walking rules
 //
 // Usage: node tools/export_web.mjs   (export_world.mjs runs it at the end)
 import fs from 'node:fs';
@@ -183,6 +185,43 @@ const extras = JSON.parse(fs.readFileSync(path.join(SRC, 'extras.json'), 'utf8')
 const heroOaks = extras.heroOaks.map((t) => ({ ...t, y: renderHeight(t.x, t.z) - 0.35 }));
 console.log(`trees: ${m} (${TIER} tier), ${bandTrees} in the near/far blend band, where y moves by up to ${maxGroundShift.toFixed(2)} m from the game's near-only y`);
 
+// ---------- tree colliders: the full canonical list, as WorldData.collideTrees uses on every tier ----------
+// Bucketed by 32 m cell over the near map so the game reads a cell's trees straight from the bytes.
+// Per tree: x, z as u16 in 1/16 m from the map's -x/-z edge (3 cm worst error), s as u8 in 1/8 m.
+// Blocking radius = s * 0.03 + the walker's radius (Player.update passes 0.35).
+const COL_CELL = 32, COL_G = meta.near.size / COL_CELL, COL_HALF = meta.near.size / 2;
+const cellOf = (x, z) => Math.min(COL_G - 1, Math.max(0, Math.floor((z + COL_HALF) / COL_CELL))) * COL_G
+  + Math.min(COL_G - 1, Math.max(0, Math.floor((x + COL_HALF) / COL_CELL)));
+const colIdx = [];
+for (let i = 0; i < tn; i++) if (kinds[i] !== 3) colIdx.push(i);
+colIdx.sort((a, b) => cellOf(field(0, a), field(2, a)) - cellOf(field(0, b), field(2, b)) || a - b);
+const colStarts = new Uint32Array(COL_G * COL_G + 1);
+for (const i of colIdx) colStarts[cellOf(field(0, i), field(2, i)) + 1]++;
+for (let c = 0; c < COL_G * COL_G; c++) colStarts[c + 1] += colStarts[c];
+const colBuf = Buffer.alloc(colStarts.length * 4 + colIdx.length * 5);
+colStarts.forEach((v, c) => colBuf.writeUInt32LE(v, c * 4));
+let co = colStarts.length * 4, colErr = 0;
+for (const i of colIdx) {
+  const qx = Math.min(65535, Math.round((field(0, i) + COL_HALF) * 16));
+  const qz = Math.min(65535, Math.round((field(2, i) + COL_HALF) * 16));
+  const qs = Math.min(255, Math.round(field(3, i) * 8));
+  colErr = Math.max(colErr, Math.abs(qx / 16 - COL_HALF - field(0, i)), Math.abs(qz / 16 - COL_HALF - field(2, i)));
+  colBuf.writeUInt16LE(qx, co); colBuf.writeUInt16LE(qz, co + 2); colBuf[co + 4] = qs; co += 5;
+}
+console.log(`colliders: ${colIdx.length} non-bush trees, max position error ${(colErr * 100).toFixed(1)} cm`);
+
+// ---------- game: Stillwater's walking rules and places (src/content/valley.js, extras.json) ----------
+const trail = paths.trail.points.map(([x, z]) => [+x.toFixed(2), +z.toFixed(2)]);
+const game = {
+  note: 'src/content/valley.js and the baked anchors; trail is the full trail (Player autoWalk and placeAtStart index it)',
+  boundary: 1850,
+  lake: { x: -150, z: 200, rx: 340, rz: 230 },
+  summit: extras.anchors.summit,
+  pois: extras.anchors.pois,
+  benches: extras.anchors.benches,
+  trail,
+};
+
 // ---------- write ----------
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -194,6 +233,7 @@ put('biome.pngdata', encodePng(meta.biome.res, meta.biome.res, 3, biomeRgb));
 put('noise.pngdata', encodePng(NOISE_RES, NOISE_RES, 4, noisePx));
 put('trees.bin', treeBuf);
 put('trees_rank.bin', rankOut);
+put('colliders.bin', colBuf);
 const webMeta = {
   format: 1,
   worldHash: meta.worldHash,
@@ -217,6 +257,12 @@ const webMeta = {
     y: 'rendered ground (near/far blend) - 0.25, bush - 0.15',
     heroOaks,
   },
+  colliders: {
+    file: 'colliders.bin', count: colIdx.length, cell: COL_CELL, grid: COL_G, origin: -COL_HALF,
+    layout: 'u32 start[grid * grid + 1] (cell = iz * grid + ix, trees of cell c are records start[c] .. start[c + 1]); then 5-byte records: x, z u16le, s u8',
+    rule: 'x = code / 16 + origin, z likewise; s = code / 8; blocks within s * 0.03 + walker radius (non-bush canonical trees, every tier)',
+  },
+  game,
   poses,
   walk,
   sizes,

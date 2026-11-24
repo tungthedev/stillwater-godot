@@ -34,6 +34,12 @@ var biome_res := 0
 var blend_start := 0.0
 var blend_end := 0.0
 var water_level := 0.0
+# Tree colliders (meta.colliders): the whole file, read in place by collide_trees.
+var col_bytes := PackedByteArray()
+var col_grid := 0
+var col_cell := 32.0
+var col_origin := 0.0
+var col_recs := 0
 
 
 func load_dir(path: String = "res://data/valley/web") -> bool:
@@ -70,6 +76,15 @@ func load_dir(path: String = "res://data/valley/web") -> bool:
 	near_bytes = near_img.get_data()
 	far_bytes = far_img.get_data()
 	biome_bytes = biome_img.get_data()
+	if meta.has("colliders"):
+		col_bytes = FileAccess.get_file_as_bytes(dir.path_join(meta.colliders.file))
+		col_grid = int(meta.colliders.grid)
+		col_cell = float(meta.colliders.cell)
+		col_origin = float(meta.colliders.origin)
+		col_recs = (col_grid * col_grid + 1) * 4
+		if col_bytes.size() != col_recs + int(meta.colliders.count) * 5:
+			push_error("compact_world: %s is %d bytes, expected %d" % [meta.colliders.file, col_bytes.size(), col_recs + int(meta.colliders.count) * 5])
+			col_bytes = PackedByteArray()
 	return true
 
 
@@ -185,6 +200,48 @@ func texture(which: String) -> ImageTexture:
 		var img: Image = {"near": near_img, "far": far_img, "biome": biome_img}[which]
 		_tex[which] = ImageTexture.create_from_image(img)
 	return _tex[which]
+
+
+# WorldData.collideTrees: push a walker of `radius` out of every non-bush tree trunk (s * 0.03 +
+# radius) in the 3 x 3 cells around it, in place. Trees are the full canonical list, as in
+# Stillwater on every tier, so at `low` some trunks that block are not drawn.
+func collide_trees(pos: Vector2, radius: float) -> Vector2:
+	if col_bytes.is_empty():
+		return pos
+	var cx := floori((pos.x - col_origin) / col_cell)
+	var cz := floori((pos.y - col_origin) / col_cell)
+	for dz in range(-1, 2):
+		var gz := cz + dz
+		if gz < 0 or gz >= col_grid:
+			continue
+		for dx in range(-1, 2):
+			var gx := cx + dx
+			if gx < 0 or gx >= col_grid:
+				continue
+			var c := gz * col_grid + gx
+			var a := col_bytes.decode_u32(c * 4)
+			var b := col_bytes.decode_u32(c * 4 + 4)
+			for k in range(a, b):
+				var o := col_recs + k * 5
+				var tx := col_bytes.decode_u16(o) / 16.0 + col_origin
+				var tz := col_bytes.decode_u16(o + 2) / 16.0 + col_origin
+				var tr := col_bytes[o + 4] / 8.0 * 0.03 + radius
+				var ex := pos.x - tx
+				var ez := pos.y - tz
+				if absf(ex) >= tr or absf(ez) >= tr:
+					continue
+				var d := sqrt(ex * ex + ez * ez)
+				if d < tr and d > 1e-4:
+					pos = Vector2(tx + ex / d * tr, tz + ez / d * tr)
+	return pos
+
+
+# The full trail (meta.game.trail), for walking and trail following.
+func trail_points() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p in meta.game.trail:
+		out.append(Vector2(p[0], p[1]))
+	return out
 
 
 func pose(stop: String) -> Dictionary:
