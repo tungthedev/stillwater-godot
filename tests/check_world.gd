@@ -9,6 +9,8 @@ const WorldData := preload("res://world/world_data.gd")
 # anything near this limit means an indexing or half-texel bug, not rounding.
 const HEIGHT_TOL := 1e-4
 const VALUE_TOL := 1e-5
+const CompactWorld := preload("res://world/compact_world.gd")
+const COMPACT_HEIGHT_TOL := 0.02
 
 var failures := 0
 
@@ -126,6 +128,8 @@ func _init() -> void:
 	if worst_probe > 1e-6:
 		_fail("placement probe fields differ (%s)" % _sci(worst_probe))
 
+	_check_compact(samples, w)
+
 	var mesh_files := 0
 	for m in w.meshes.meshes:
 		var bytes := FileAccess.get_file_as_bytes("res://data/valley".path_join(m.file))
@@ -135,6 +139,55 @@ func _init() -> void:
 		mesh_files += 1
 	print("meshes: %d files match their layout" % mesh_files)
 	_finish()
+
+
+# The compact web pack (what the scene loads) against Stillwater's own sample values and the
+# full float grids. Heights are quantised (near 8.7 mm steps, far 3 cm), the trail mask to 1/127.
+func _check_compact(samples: Array, w: RefCounted) -> void:
+	var c := CompactWorld.new()
+	if not c.load_dir("res://data/valley/web"):
+		_fail("compact pack failed to load")
+		return
+	if str(c.meta.worldHash) != str(w.meta.worldHash):
+		_fail("compact pack is from world %s, full export is %s" % [c.meta.worldHash, w.meta.worldHash])
+	var e_near := 0.0
+	var e_far := 0.0
+	var e_render := 0.0
+	var e_trail := 0.0
+	var e_biome := 0.0
+	for s in samples:
+		var x: float = s.x
+		var z: float = s.z
+		e_near = maxf(e_near, absf(c.height_near(x, z) - float(s.h)))
+		e_far = maxf(e_far, absf(c.height_far(x, z) - float(s.hFar)))
+		e_render = maxf(e_render, absf(c.height(x, z) - float(s.hRender)))
+		e_trail = maxf(e_trail, absf(c.trail_at(x, z) - float(s.trail)))
+		var b := c.biome_at(x, z)
+		e_biome = maxf(e_biome, maxf(absf(b.flowers - float(s.flowers)), absf(b.meadow - float(s.meadow))))
+	# Dense grid over both maps, so a wrong byte order or row flip anywhere shows up.
+	var g_near := 0.0
+	var g_far := 0.0
+	for gz in range(-2040, 2041, 37):
+		for gx in range(-2040, 2041, 41):
+			g_near = maxf(g_near, absf(c.height_near(gx, gz) - w.height_near(gx, gz)))
+	for gz in range(-16380, 16381, 331):
+		for gx in range(-16380, 16381, 347):
+			g_far = maxf(g_far, absf(c.height_far(gx, gz) - w.height_far(gx, gz)))
+	print("compact pack: samples max error near %.4f m, far %.4f m, render %.4f m, trail %.4f, biome %.4f; grid near %.4f m, far %.4f m" % [
+		e_near, e_far, e_render, e_trail, e_biome, g_near, g_far])
+	if maxf(maxf(e_near, e_far), maxf(e_render, maxf(g_near, g_far))) > COMPACT_HEIGHT_TOL:
+		_fail("compact heights differ by more than %.2f m" % COMPACT_HEIGHT_TOL)
+	if e_trail > 0.5 / 127.0 + 1e-4:
+		_fail("compact trail mask differs by %.5f" % e_trail)
+	if e_biome > 0.5 / 255.0:
+		_fail("compact biome differs by %.5f" % e_biome)
+	if c.biome_bytes != w.biome_rgb:
+		_fail("compact biome bytes differ from biome_rgb.u8")
+	for stop in ["trailhead", "forest"]:
+		var p: Dictionary = c.pose(stop)
+		var e := absf(c.height_near(p.position[0], p.position[2]) + float(c.meta.poses.eyeHeight) - float(p.position[1]))
+		if e > COMPACT_HEIGHT_TOL:
+			_fail("compact pose %s eye height differs by %.4f m" % [stop, e])
 
 
 static func _sci(v: float) -> String:

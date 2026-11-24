@@ -407,3 +407,9 @@ const total = Object.values(sizes).reduce((a, b) => a + b, 0);
 console.log(`exported ${Object.keys(sizes).length} files, ${(total / 1e6).toFixed(1)} MB, hash ${world.hash}, commit ${commit.slice(0, 7)}`);
 for (const [name, t] of Object.entries(tiers)) console.log(`  ${name}: trees ${t.trees} -> ${t.expectedTrees}, rocks ${t.rocks} -> ${t.expectedRocks}`);
 for (const s of Object.values(poses.stops)) console.log(`  pose ${s.name}: pos ${s.position.map((v) => v.toFixed(2)).join(', ')} yaw ${s.yaw.toFixed(4)} push ${s.collisionPushM.toFixed(3)} m house ${s.distToHouseM?.toFixed(1)} m bench ${s.distToNearestBenchM.toFixed(1)} m`);
+
+// ---------- compact files the scene actually loads (all platforms) ----------
+{
+  const r = spawnSync(process.execPath, [path.join(HERE, 'export_web.mjs')], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error(`export_web failed (exit ${r.status})`);
+}
