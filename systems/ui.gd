@@ -221,7 +221,7 @@ func _build_panel() -> void:
 
 const WIDTHS_FPS := [78, 44, 50, 50, 56, 44]
 # Fits the 354 pt inside of the panel on a 390 pt wide phone.
-const WIDTHS_MS := [64, 58, 58, 52, 56, 46]
+const WIDTHS_MS := [64, 58, 58, 60, 54, 44]
 
 
 func _row(cells: Array, size: int, col: Color, widths: Array = WIDTHS_FPS) -> HBoxContainer:
@@ -268,30 +268,35 @@ func _show_results(r: Dictionary) -> void:
 	_refresh()
 
 
-# Where the frame time goes: ms avg / p95 per stage, the CPU or GPU verdict per stage, and the
-# biggest per-system script costs of the slowest stage.
+# Where the frame time goes: ms avg / p95 per stage (main-thread CPU = work + GPU wait), the CPU or
+# GPU verdict per stage, the biggest GPU waits and the per-system script costs of the slowest stage.
 func _timing_rows(r: Dictionary) -> void:
 	var head := Color(0.7, 0.75, 0.8)
-	panel_box.add_child(_row(["ms avg/p95", "frame", "CPU", "script", "render", "GPU"], 12, head, WIDTHS_MS))
+	panel_box.add_child(_row(["ms avg/p95", "frame", "CPU", "GPU wait", "script", "render"], 12, head, WIDTHS_MS))
 	for st in r.stages:
 		var s: Dictionary = st
-		var has_cpu := s.has("cpu_avg")
-		var gpu := "n/a"
-		if float(s.get("gpu_avg", -1.0)) >= 0.0:
-			gpu = _pair(s.gpu_avg, s.gpu_p95)
-		var frame := _pair(s.frame_avg, s.frame_p95) if has_cpu else _pair(1000.0 / maxf(float(s.fps), 0.1), s.p95_ms)
-		panel_box.add_child(_row([s.stage, frame,
-			_pair(s.cpu_avg, s.cpu_p95) if has_cpu else "n/a", _pair(s.script_avg, s.script_p95), _pair(s.render_avg, s.render_p95), gpu],
-			13, Color.WHITE, WIDTHS_MS))
+		if s.has("cpu_avg"):
+			panel_box.add_child(_row([s.stage, _pair(s.frame_avg, s.frame_p95), _pair(s.cpu_avg, s.cpu_p95), _pair(s.wait_avg, s.wait_p95),
+				_pair(s.script_avg, s.script_p95), "%.1f" % s.render_work_avg], 13, Color.WHITE, WIDTHS_MS))
+		else:
+			panel_box.add_child(_row([s.stage, _pair(1000.0 / maxf(float(s.fps), 0.1), s.p95_ms), "n/a", "n/a",
+				_pair(s.script_avg, s.script_p95), "%.1f" % s.render_avg], 13, Color.WHITE, WIDTHS_MS))
 	var lines := PackedStringArray()
 	for st in r.stages:
 		var s: Dictionary = st
-		lines.append("%s: %s%s" % [s.stage, s.get("bound_note", "n/a"), (", other %.1f" % s.other_avg) if s.has("other_avg") else ""])
+		lines.append("%s: %s" % [s.stage, s.get("bound_note", "n/a")])
 	panel_box.add_child(_text("\n".join(lines), 12, Color(0.95, 0.9, 0.65)))
 	var worst: Dictionary = r.stages[0]
 	for st in r.stages:
 		if float(st.fps) < float(worst.fps):
 			worst = st
+	var waits := PackedStringArray()
+	var wb: Dictionary = worst.get("wait_by", {})
+	for k in wb:
+		if float(wb[k]) >= 0.05:
+			waits.append("%s %.2f" % [k, wb[k]])
+	if not waits.is_empty():
+		panel_box.add_child(_text("GPU waits ms/frame, %s: %s" % [worst.stage, " · ".join(waits)], 12, Color(0.85, 0.87, 0.9)))
 	var parts := PackedStringArray()
 	var sys: Dictionary = worst.get("sys_ms", {})
 	for k in sys:
@@ -302,8 +307,9 @@ func _timing_rows(r: Dictionary) -> void:
 			if sys.has("%s.%s" % [k, sk]):
 				sub.append("%s %.2f" % [sk, sys["%s.%s" % [k, sk]]])
 		parts.append("%s %.2f%s" % [k, sys[k], (" (%s)" % ", ".join(sub)) if not sub.is_empty() else ""])
-	panel_box.add_child(_text("Script ms/frame, %s: %s" % [worst.stage, " · ".join(parts)], 12, Color(0.85, 0.87, 0.9)))
-	panel_box.add_child(_text("CPU = main-thread ms per frame; other = CPU - script - render; a WebGL call waiting on the GPU counts as CPU. GPU timer: %s" % str(r.stages[0].get("gpu_state", "n/a")), 11, Color(0.6, 0.63, 0.68)))
+	panel_box.add_child(_text("Script ms/frame, %s: %s%s" % [worst.stage, " · ".join(parts),
+		(" · other %.1f" % worst.other_avg) if worst.has("other_avg") else ""], 12, Color(0.85, 0.87, 0.9)))
+	panel_box.add_child(_text("CPU = main-thread ms per frame = work + GPU wait (time inside WebGL calls that wait for the GPU); render = render submit minus those waits. GPU timer: %s" % str(r.stages[0].get("gpu_state", "n/a")), 11, Color(0.6, 0.63, 0.68)))
 
 
 static func _pair(a, b) -> String:

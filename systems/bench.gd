@@ -11,8 +11,9 @@ extends Node
 #    Where the time goes, per stage: the main-thread time of each frame and the GPU time where the
 #    browser has a timer query (systems/frame_timer.gd, Web only), split into script time (from the
 #    tree's process_frame signal to this node, which processes last), render submit (frame_pre_draw
-#    to frame_post_draw: culling, draw lists, WebGL calls) and other (input, physics, engine
-#    overhead: the main-thread time minus both). Each system reports its own _process time.
+#    to frame_post_draw: culling, draw lists, WebGL calls, minus the GPU waits inside it), the GPU
+#    waits and other (input, physics, engine overhead: what is left). Each system reports its own
+#    _process time.
 # 2. Passive: after any pose change, one BENCH line over a 20 s window (tools/measure_web.mjs).
 
 signal finished(result: Dictionary)
@@ -194,7 +195,10 @@ func _step_bench(script_us: int) -> void:
 	var timing := FrameTimer.analyze(FrameTimer.stop())
 	var st := _stage_stats(stage, el).merged(timing)
 	if st.has("cpu_avg"):
-		st["other_avg"] = snappedf(float(st.cpu_avg) - float(st.script_avg) - float(st.render_avg), 0.01)
+		# The GPU waits happen inside the render span (Emscripten's frame commit), so render work is
+		# the span minus them; other is what is left of the main-thread time.
+		st["render_work_avg"] = snappedf(maxf(0.0, float(st.render_avg) - float(st.wait_avg)), 0.01)
+		st["other_avg"] = snappedf(float(st.cpu_avg) - float(st.wait_avg) - float(st.script_avg) - float(st.render_work_avg), 0.01)
 	stages.append(st)
 	stage_i += 1
 	if stage_i < STAGES.size():
