@@ -409,14 +409,14 @@ func _show_sweep_results(r: Dictionary) -> void:
 	for p_any in r.poses:
 		var p: Dictionary = p_any
 		var drift: float = float(p.drift_ms)
-		var hdr := "%s base %.1f->%.1f (%+.1f) cpu %s raf %s prc %.1f phy %.1f" % [
+		var hdr := "%s base %.1f->%.1f (%+.1f) cpu %s raf %s scr %.1f phy %.1f" % [
 			str(p.pose).capitalize(), float(p.base_start_ms), float(p.base_end_ms), drift,
 			_opt_ms(p.get("base_raf_cpu_ms", -1.0)), _opt_ms(p.get("base_raf_iv_ms", -1.0)),
-			float(p.get("base_proc_ms", 0.0)), float(p.get("base_phys_ms", 0.0))]
+			float(p.get("base_script_ms", 0.0)), float(p.get("base_phys_ms", 0.0))]
 		panel_box.add_child(_text(hdr, 9, Color(0.96, 0.90, 0.62)))
 		var tbl := VBoxContainer.new()
 		tbl.add_theme_constant_override("separation", 0)
-		tbl.add_child(_row(["variant", "med", "Δms", "%", "cpu", "raf", "prc"], 9, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
+		tbl.add_child(_row(["variant", "med", "Δms", "%", "cpu", "raf", "scr"], 9, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
 		for v_any in p.variants:
 			var v: Dictionary = v_any
 			var d: float = float(v.delta_ms)
@@ -424,7 +424,7 @@ func _show_sweep_results(r: Dictionary) -> void:
 			tbl.add_child(_row([
 				str(v.label), "%.1f" % float(v.median_ms), "%+.1f" % d, "%+.0f%%" % float(v.delta_pct),
 				_opt_ms(v.get("raf_cpu_ms", -1.0)), _opt_ms(v.get("raf_iv_ms", -1.0)),
-				"%.1f" % float(v.get("proc_ms", 0.0))], 10, col, WIDTHS_SWEEP))
+				"%.1f" % float(v.get("script_ms", 0.0))], 10, col, WIDTHS_SWEEP))
 		panel_box.add_child(tbl)
 	dev_on = true
 	panel.visible = true

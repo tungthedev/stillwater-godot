@@ -52,7 +52,9 @@ var _warm := 0
 var _t0_us := 0
 var _last_us := 0
 var _run_t0_us := 0
+var _frame_start_us := 0
 var _frames: Array[float] = []
+var _script_ms: Array[float] = []
 var _proc_ms: Array[float] = []
 var _phys_ms: Array[float] = []
 var _draws_sum := 0.0
@@ -70,8 +72,9 @@ var _base_shadow := false
 
 
 func _ready() -> void:
-	# Last in the frame, matching bench.gd.
+	# Last in the frame, matching bench.gd, so script_us spans every other node's _process.
 	process_priority = 1 << 30
+	get_tree().process_frame.connect(func() -> void: _frame_start_us = Time.get_ticks_usec())
 	FrameTimer.install()
 
 
@@ -289,6 +292,7 @@ func _begin_measure(now: int) -> void:
 	_t0_us = now
 	_last_us = now
 	_frames.clear()
+	_script_ms.clear()
 	_proc_ms.clear()
 	_phys_ms.clear()
 	_draws_sum = 0.0
@@ -315,12 +319,13 @@ func _raf_stop() -> Dictionary:
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	var script_us := t0 - _frame_start_us
 	if running:
-		_step()
+		_step(script_us)
 	prof_us = Time.get_ticks_usec() - t0
 
 
-func _step() -> void:
+func _step(script_us: int) -> void:
 	var now := Time.get_ticks_usec()
 	var step: Dictionary = _schedule[_step_i]
 	var el := (now - _t0_us) / 1.0e6
@@ -333,6 +338,7 @@ func _step() -> void:
 		return
 	_frames.append((now - _last_us) / 1000.0)
 	_last_us = now
+	_script_ms.append(maxf(0.0, float(script_us) / 1000.0))
 	_proc_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	_phys_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
 	if not _frozen_step or _draws_n == 0:
@@ -363,6 +369,8 @@ func _step() -> void:
 func _window_stats(step: Dictionary, dur_s: float, timing: Dictionary, raf: Dictionary) -> Dictionary:
 	var sorted := _frames.duplicate()
 	sorted.sort()
+	var scr_s := _script_ms.duplicate()
+	scr_s.sort()
 	var proc_s := _proc_ms.duplicate()
 	proc_s.sort()
 	var phys_s := _phys_ms.duplicate()
@@ -395,7 +403,8 @@ func _window_stats(step: Dictionary, dur_s: float, timing: Dictionary, raf: Dict
 		"raf_cpu_ms": raf_cpu_med,
 		"raf_iv_ms": raf_iv_med,
 		"raf_samples": raf_cpu.size(),
-		"proc_ms": snappedf(_median_sorted(proc_s), 0.01),
+		"script_ms": snappedf(_median_sorted(scr_s), 0.01),
+		"perf_proc_ms": snappedf(_median_sorted(proc_s), 0.01),
 		"phys_ms": snappedf(_median_sorted(phys_s), 0.01),
 		"draws": roundi(_draws_sum / maxf(1.0, float(_draws_n))),
 		"tris": roundi(_tris_sum / maxf(1.0, float(_draws_n))),
@@ -417,6 +426,7 @@ func _finish_pose() -> void:
 	var base_meds: Array[float] = []
 	var base_cpus: Array[float] = []
 	var base_rafs: Array[float] = []
+	var base_scrs: Array[float] = []
 	var base_procs: Array[float] = []
 	var base_physs: Array[float] = []
 	for rec in _step_records:
@@ -427,7 +437,8 @@ func _finish_pose() -> void:
 				base_cpus.append(float(rec.raf_cpu_ms))
 			if float(rec.raf_iv_ms) >= 0.0:
 				base_rafs.append(float(rec.raf_iv_ms))
-			base_procs.append(float(rec.proc_ms))
+			base_scrs.append(float(rec.script_ms))
+			base_procs.append(float(rec.perf_proc_ms))
 			base_physs.append(float(rec.phys_ms))
 	var rows: Array[Dictionary] = []
 	var additive_save := 0.0
@@ -462,6 +473,7 @@ func _finish_pose() -> void:
 	var base_end := base_meds[base_meds.size() - 1]
 	base_cpus.sort()
 	base_rafs.sort()
+	base_scrs.sort()
 	base_procs.sort()
 	base_physs.sort()
 	_pose_results.append({
@@ -471,7 +483,8 @@ func _finish_pose() -> void:
 		"base_median_ms": snappedf(base_med, 0.01),
 		"base_raf_cpu_ms": snappedf(_median_sorted(base_cpus), 0.01) if not base_cpus.is_empty() else -1.0,
 		"base_raf_iv_ms": snappedf(_median_sorted(base_rafs), 0.01) if not base_rafs.is_empty() else -1.0,
-		"base_proc_ms": snappedf(_median_sorted(base_procs), 0.01),
+		"base_script_ms": snappedf(_median_sorted(base_scrs), 0.01),
+		"base_perf_proc_ms": snappedf(_median_sorted(base_procs), 0.01),
 		"base_phys_ms": snappedf(_median_sorted(base_physs), 0.01),
 		"drift_ms": snappedf(base_end - base_start, 0.01),
 		"additive_save_ms": snappedf(additive_save, 0.01),

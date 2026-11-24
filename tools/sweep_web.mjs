@@ -61,12 +61,12 @@ try {
   const noteStr = (sweep.notes || []).length ? `  notes=[${sweep.notes.join(', ')}]` : '';
   console.log(`\nSWEEP ${sweep.build}  total=${sweep.total_s}s  internal=${sweep.internal.join('x')} of ${sweep.screen.join('x')}  post=${sweep.post}  target=${sweep.target}${noteStr}`);
   for (const p of sweep.poses) {
-    console.log(`\n== ${p.pose}  base ${p.base_start_ms} -> ${p.base_end_ms} ms (drift ${p.drift_ms >= 0 ? '+' : ''}${p.drift_ms}, med ${p.base_median_ms}, cpu ${fmtOpt(p.base_raf_cpu_ms, 1)}, raf ${fmtOpt(p.base_raf_iv_ms, 1)}, proc ${p.base_proc_ms}, phys ${p.base_phys_ms}, draws=${p.base_draws}, tris=${p.base_tris})`);
-    console.log('  variant          med_ms  base_ms  delta_ms  delta_%  raf_cpu  raf_iv   proc   phys   draws    tris  gpu_avg');
+    console.log(`\n== ${p.pose}  base ${p.base_start_ms} -> ${p.base_end_ms} ms (drift ${p.drift_ms >= 0 ? '+' : ''}${p.drift_ms}, med ${p.base_median_ms}, cpu ${fmtOpt(p.base_raf_cpu_ms, 1)}, raf ${fmtOpt(p.base_raf_iv_ms, 1)}, scr ${p.base_script_ms}, perf_proc ${p.base_perf_proc_ms}, phys ${p.base_phys_ms}, draws=${p.base_draws}, tris=${p.base_tris})`);
+    console.log('  variant          med_ms  base_ms  delta_ms  delta_%  raf_cpu  raf_iv    scr   phys   draws    tris  gpu_avg');
     for (const v of p.variants) {
       const dMs = `${v.delta_ms >= 0 ? '+' : ''}${v.delta_ms.toFixed(1)}`.padStart(7);
       const dPct = `${v.delta_pct >= 0 ? '+' : ''}${v.delta_pct.toFixed(1)}%`.padStart(7);
-      console.log(`  ${v.label.padEnd(15)} ${v.median_ms.toFixed(1).padStart(7)}  ${v.base_ms.toFixed(1).padStart(7)}  ${dMs}  ${dPct}  ${fmtOpt(v.raf_cpu_ms, 7)}  ${fmtOpt(v.raf_iv_ms, 6)}  ${v.proc_ms.toFixed(2).padStart(5)}  ${v.phys_ms.toFixed(2).padStart(5)}  ${String(v.draws).padStart(6)}  ${String(v.tris).padStart(7)}  ${fmtOpt(v.gpu_avg, 7)}`);
+      console.log(`  ${v.label.padEnd(15)} ${v.median_ms.toFixed(1).padStart(7)}  ${v.base_ms.toFixed(1).padStart(7)}  ${dMs}  ${dPct}  ${fmtOpt(v.raf_cpu_ms, 7)}  ${fmtOpt(v.raf_iv_ms, 6)}  ${v.script_ms.toFixed(2).padStart(5)}  ${v.phys_ms.toFixed(2).padStart(5)}  ${String(v.draws).padStart(6)}  ${String(v.tris).padStart(7)}  ${fmtOpt(v.gpu_avg, 7)}`);
     }
   }
   if (errors.length) {
