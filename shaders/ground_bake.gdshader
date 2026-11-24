@@ -13,7 +13,7 @@ render_mode blend_disabled;
 
 uniform vec2 tile_origin = vec2(0.0);
 uniform vec2 slot_origin = vec2(0.0);
-uniform float tile_size = 16.0;
+uniform float tile_size = 12.0;
 uniform float slot_use = 125.0;
 
 void fragment() {

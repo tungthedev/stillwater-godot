@@ -1,8 +1,9 @@
 // Far terrain shader (systems/terrain.gd): nodes beyond the near/mid split or outside the 4 km
 // valley map. Uses the exact same CDLOD vertices and skirt as terrain_baked.gdshader so the split
 // is crack-free, moves normals, cloud shadow, toon ramp and peak rim to the vertex stage, reads
-// the one-time valley bake inside the valley and 2-fetch painted mountain strata beyond, and keeps
-// analytic aerial perspective per pixel so large distant triangles never show fog banding.
+// the one-time valley bake plus live near_tex trail inside the valley and 2-fetch painted mountain
+// strata beyond, and keeps analytic aerial perspective per pixel so large distant triangles never
+// show fog banding.
 shader_type spatial;
 render_mode unshaded, fog_disabled, cull_back;
 
@@ -25,6 +26,7 @@ varying vec3 v_n;
 varying vec3 v_direct;
 varying vec3 v_hemi;
 varying vec3 v_rim;
+varying vec2 v_meta;
 
 void vertex() {
 	float size = INSTANCE_CUSTOM.z;
@@ -67,6 +69,10 @@ void vertex() {
 		rim_col = light_col * vec3(1.0, 0.95, 0.86) * rim * sunSide * 0.04 * sun_vis * smoothstep(0.0, 0.12, sun_dir.y);
 	}
 	v_rim = rim_col;
+
+	vec2 map_uv = clamp(xz / near_size + 0.5, vec2(0.0), vec2(1.0));
+	float bio_r = fb < 1.0 ? textureLod(biome_tex, map_uv, 0.0).r : 0.55;
+	v_meta = vec2(bio_r, smoothstep(0.08, 0.24, sun_dir.y));
 }
 
 void fragment() {
@@ -80,11 +86,31 @@ void fragment() {
 	float far_mix = max(farZ, fb);
 
 	vec3 col = vec3(0.0);
+	float trail_glow = 0.0;
 	if (far_mix < 0.999) {
+		vec2 map_uv = clamp(xz / near_size + 0.5, vec2(0.0005), vec2(0.9995));
 		vec4 val_s = valley_ready > 0.5
-				? texture(valley_tex, clamp(xz / near_size + 0.5, vec2(0.0005), vec2(0.9995)))
+				? textureLod(valley_tex, map_uv, 0.0)
 				: vec4(0.32, 0.45, 0.22, 0.0);
 		col = val_s.rgb * val_s.rgb;
+
+		// Keep the winding hiking trail visible as a landmark across the valley (700-1200 m).
+		float trail = max((texture(near_tex, map_uv).b * 255.0 - 128.0) / 127.0, 0.0);
+		if (trail > 0.01) {
+			float summitNarrow = smoothstep(210.0, 345.0, h) * 0.36;
+			float trailEdge2 = trail - summitNarrow - 0.04;
+			float fw_tr = clamp(fwidth(trailEdge2) * 0.9, 0.018, 0.14);
+			float twTrail = smoothstep(0.495 - fw_tr, 0.495 + fw_tr, trailEdge2);
+			float fpath = smoothstep(0.28, 0.68, v_meta.x);
+			vec3 tcol = mix(vec3(0.74, 0.50, 0.26), vec3(0.155, 0.105, 0.062), fpath);
+			tcol = mix(tcol, vec3(0.36, 0.32, 0.27), smoothstep(195.0, 320.0, h) * 0.92);
+			float r1 = (trail - 0.74) * 8.5;
+			float rut = exp(-(r1 * r1)) * 0.32;
+			col = mix(col, tcol * (1.0 - rut), twTrail);
+			float trM = smoothstep(0.35, 0.60, trail);
+			float openPath = 1.0 - smoothstep(0.32, 0.68, v_meta.x) * 0.85;
+			trail_glow = trM * openPath * (1.0 - far_mix);
+		}
 	}
 
 	if (far_mix > 0.001) {
@@ -126,7 +152,8 @@ void fragment() {
 	vec3 ind = v_hemi * col;
 	ind = max(mix(vec3(w_luma(ind)), ind, 1.18), 0.0) * shadow_ambient_tint * ambient_boost;
 	ind = w_light_floor(ind, col);
-	vec3 lit = w_light_floor(v_direct * col + ind + v_rim, col);
+	vec3 emis = v_rim + vec3(0.12, 0.08, 0.035) * trail_glow * v_meta.y;
+	vec3 lit = w_light_floor(v_direct * col + ind + emis, col);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(wp, cam, atm_mul, atm_add);
