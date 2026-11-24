@@ -442,36 +442,50 @@ func _build_rock_mesh(seed_val: int, subdiv: int) -> ArrayMesh:
 			next_tris.append(Vector3i(ab, bc, ca))
 		tris = next_tris
 
-	# Sculpt chunky planar-cut alpine boulder (rocks.js rockGeometry recipe).
+	# Sculpt chunky planar-cut alpine boulder with bold faceted side walls and flat sunlit crown.
 	var planes: Array[Dictionary] = []
-	for _i in 10:
-		var pn := Vector3(rng.randf() - 0.5, rng.randf() - 0.22, rng.randf() - 0.5).normalized()
-		planes.append({"n": pn, "d": 0.64 + rng.randf() * 0.22})
+	for i in 11:
+		var pn: Vector3
+		if i < 4:
+			# Steep flank planes give clear vertical/angled shadow faces on flattened meadow boulders.
+			var ang := float(i) * (TAU / 4.0) + rng.randf() * 0.75
+			pn = Vector3(cos(ang), 0.14 + rng.randf() * 0.22, sin(ang)).normalized()
+		elif i == 4:
+			pn = Vector3((rng.randf() - 0.5) * 0.35, 1.0, (rng.randf() - 0.5) * 0.35).normalized()
+		else:
+			pn = Vector3(rng.randf() - 0.5, rng.randf() - 0.18, rng.randf() - 0.5).normalized()
+		planes.append({"n": pn, "d": 0.60 + rng.randf() * 0.20})
 	var ox := rng.randf() * 100.0
 	var oy := rng.randf() * 100.0
 	var oz := rng.randf() * 100.0
 	var cav := PackedFloat32Array()
+	var hloc := PackedFloat32Array()
+	var edge := PackedFloat32Array()
 	cav.resize(verts.size())
+	hloc.resize(verts.size())
+	edge.resize(verts.size())
 	for i in verts.size():
 		var v := verts[i]
 		var n1 := sin(v.x * 2.7 + ox) * cos(v.y * 2.5 + oy) * sin(v.z * 2.9 + oz)
 		var n2 := sin(v.x * 5.4 - oz) * sin(v.y * 4.8 + ox) * cos(v.z * 5.1 - oy)
-		v *= 1.0 + n1 * 0.20 + n2 * 0.08
+		v *= 1.0 + n1 * 0.22 + n2 * 0.08
 		var cut_sum := 0.0
 		for pl in planes:
 			var dd := v.dot(pl.n)
 			if dd > float(pl.d):
-				var cut := (dd - float(pl.d)) * 0.86
+				var cut := (dd - float(pl.d)) * 0.88
 				v -= pl.n * cut
 				cut_sum += cut
 		# Flattened bottom skirt extends solidly into sloped terrain so boulders never float.
 		if v.y < -0.25:
 			v.y = -0.25 + (v.y + 0.25) * 0.45
 		verts[i] = v
-		# Cavity AO: bottom faces slightly darker, sharp cut bevels subtly brighter.
-		cav[i] = clampf(0.76 + clampf((v.y + 0.45) * 0.32, 0.0, 0.28) + clampf(cut_sum * 0.14, 0.0, 0.12), 0.55, 1.0)
+		# r: crevice/pocket AO, g: normalized local height (0 at ground seam, 1 at top crown), b: cut ridge edge.
+		cav[i] = clampf(0.68 + clampf((v.y + 0.35) * 0.30, 0.0, 0.26) + clampf(cut_sum * 0.12, 0.0, 0.10), 0.52, 1.0)
+		hloc[i] = clampf((v.y + 0.32) / 0.86, 0.0, 1.0)
+		edge[i] = clampf(cut_sum * 0.55, 0.0, 1.0)
 
-	# Compute smooth vertex normals, then blend 65% flat face normal + 35% smooth for crisp facets.
+	# Compute smooth vertex normals, then blend 82% flat face normal + 18% smooth for crisp painted facets.
 	var smooth_n: Array[Vector3] = []
 	smooth_n.resize(verts.size())
 	for i in verts.size():
@@ -507,9 +521,8 @@ func _build_rock_mesh(seed_val: int, subdiv: int) -> ArrayMesh:
 		var base := pv.size()
 		for vi: int in [f.x, f.y, f.z]:
 			pv.append(verts[vi])
-			pn.append((fn * 0.68 + smooth_n[vi] * 0.32).normalized())
-			var a := cav[vi]
-			pc.append_array([a, a, a, 1.0])
+			pn.append((fn * 0.82 + smooth_n[vi] * 0.18).normalized())
+			pc.append_array([cav[vi], hloc[vi], edge[vi], 1.0])
 		idx.append_array([base, base + 1, base + 2])
 
 	var arrays := []
