@@ -107,7 +107,8 @@ void fragment() {
 	base = mix(base, base * vec3(1.14, 1.06, 0.80), smoothstep(0.50, 0.80, 1.0 - macH) * 0.38);
 	float sunSide = clamp(dot(impN, sun_dir) * 0.5 + 0.5, 0.0, 1.0);
 	float litMask = smoothstep(0.20, 0.78, sunSide * 0.62 + v_y * 0.28);
-	vec3 dcol = mix(base * vec3(0.46, 0.82, 1.24), base * vec3(1.18, 1.22, 0.72), litMask);
+	vec3 coolMul = painterly > 0.5 ? vec3(0.56, 0.76, 1.26) : vec3(0.46, 0.82, 1.24);
+	vec3 dcol = mix(base * coolMul, base * vec3(1.18, 1.22, 0.72), litMask);
 
 	vec3 cam = CAMERA_POSITION_WORLD;
 	float dist = length(v_wpos - cam);
@@ -121,6 +122,7 @@ void fragment() {
 		lit += dcol * light_col * vec3(0.95, 1.02, 0.68) * back * 0.14 * sl;
 		lit += dcol * vec3(0.84, 1.0, 0.74) * 0.036 * length(light_col);
 	}
+	lit = w_light_floor(lit, base);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(v_wpos, cam, atm_mul, atm_add);

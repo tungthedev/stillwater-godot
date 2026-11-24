@@ -9,6 +9,7 @@ extends Node3D
 # exposure, tone curve and grade in their shaders. The sun light here is for Godot-lit
 # placeholders (test grass) and its shadow toggle.
 
+const Flags := preload("res://systems/flags.gd")
 const HOURS := 16.0
 const LAT := deg_to_rad(46.0)
 const DECL := deg_to_rad(17.0)
@@ -16,14 +17,61 @@ const HEMI_SKY := Vector3(0.4036, 0.6208, 0.9223)
 const HEMI_GROUND := Vector3(0.2488, 0.2827, 0.2194)
 const EXPOSURE := 0.6
 
+# Painterly palette at hour 16, held in vars below so a time of day can drive them.
+const PAINTERLY_HEMI_SKY := Vector3(0.41, 0.58, 0.94)
+const PAINTERLY_HEMI_GROUND := Vector3(0.34, 0.35, 0.56)
+const PAINTERLY_SHADOW_TINT := Vector3(0.92, 0.92, 1.20)
+const PAINTERLY_AMBIENT_BOOST := 1.12
+const PAINTERLY_LIGHT_FLOOR_COL := Vector3(0.42, 0.50, 0.72)
+const PAINTERLY_LIGHT_FLOOR := 0.45
+const PAINTERLY_HORIZON_TINT := Vector3(0.95, 0.99, 1.07)
+const PAINTERLY_SKY_SAT := 1.38
+const PAINTERLY_HORIZON_HAZE := 0.34
+const PAINTERLY_DIRECT_SCALE := 0.96
+const CLOUD_LIT_COL := Vector3(2.55, 2.38, 2.15)
+const CLOUD_SHADOW_COL := Vector3(0.62, 0.78, 1.32)
+const CLOUD_RIM_COL := Vector3(3.10, 2.65, 1.95)
+const PAINTERLY_TRICKS: Array[String] = [
+	"light_floor",
+	"cool_shadows",
+	"matte",
+	"horizon_fog",
+	"painted_clouds",
+]
+
+var style := "painterly"
+var painterly := true
 var sun: DirectionalLight3D
 var sun_dir := Vector3.UP
 var sun_col := Vector3.ONE
 var light_col := Vector3.ONE
+var hemi_sky := PAINTERLY_HEMI_SKY
+var hemi_ground := PAINTERLY_HEMI_GROUND
+var shadow_ambient_tint := PAINTERLY_SHADOW_TINT
+var ambient_boost := PAINTERLY_AMBIENT_BOOST
+var light_floor_col := PAINTERLY_LIGHT_FLOOR_COL
+var light_floor := PAINTERLY_LIGHT_FLOOR
+var horizon_tint := PAINTERLY_HORIZON_TINT
+var sky_sat := PAINTERLY_SKY_SAT
+var horizon_haze := PAINTERLY_HORIZON_HAZE
+var cloud_lit_col := CLOUD_LIT_COL
+var cloud_shadow_col := CLOUD_SHADOW_COL
+var cloud_rim_col := CLOUD_RIM_COL
 var sky_mat: ShaderMaterial
 # Every material that ends in w_grade, so the post switch reaches all of them.
 var mats: Array[ShaderMaterial] = []
 var post_on := false
+
+
+func _init() -> void:
+	style = Flags.style()
+	painterly = style != "classic"
+	hemi_sky = PAINTERLY_HEMI_SKY if painterly else HEMI_SKY
+	hemi_ground = PAINTERLY_HEMI_GROUND if painterly else HEMI_GROUND
+
+
+func active_tricks() -> Array[String]:
+	return PAINTERLY_TRICKS.duplicate() if painterly else []
 
 
 # src/env.js sunDirection: +x east, +z south, y up; returns the direction towards the sun.
@@ -96,13 +144,29 @@ func _ready() -> void:
 	sun.directional_shadow_max_distance = 80.0
 
 
-# Values every Stillwater-look shader reads (shaders/stillwater.gdshaderinc).
+# Values every Stillwater-look shader reads (shaders/stillwater.gdshaderinc, atmosphere.gdshaderinc,
+# clouds.gdshader). Set explicitly on every material including sky_mat because sky-shader uniform
+# defaults are not applied in the Compatibility renderer.
 func apply_to(mat: ShaderMaterial) -> void:
+	var active_light := light_col * (PAINTERLY_DIRECT_SCALE if painterly else 1.0)
 	mat.set_shader_parameter("sun_dir", sun_dir)
 	mat.set_shader_parameter("sun_col", sun_col)
-	mat.set_shader_parameter("light_col", light_col)
+	mat.set_shader_parameter("light_col", active_light)
 	mat.set_shader_parameter("exposure", EXPOSURE)
 	mat.set_shader_parameter("post_on", 1.0 if post_on else 0.0)
+	mat.set_shader_parameter("painterly", 1.0 if painterly else 0.0)
+	mat.set_shader_parameter("horizon_tint", horizon_tint)
+	mat.set_shader_parameter("sky_sat", sky_sat)
+	mat.set_shader_parameter("horizon_haze", horizon_haze)
+	mat.set_shader_parameter("hemi_sky", hemi_sky)
+	mat.set_shader_parameter("hemi_ground", hemi_ground)
+	mat.set_shader_parameter("shadow_ambient_tint", shadow_ambient_tint)
+	mat.set_shader_parameter("ambient_boost", ambient_boost)
+	mat.set_shader_parameter("light_floor_col", light_floor_col)
+	mat.set_shader_parameter("light_floor", light_floor)
+	mat.set_shader_parameter("cloud_lit_col", cloud_lit_col)
+	mat.set_shader_parameter("cloud_shadow_col", cloud_shadow_col)
+	mat.set_shader_parameter("cloud_rim_col", cloud_rim_col)
 	if not mats.has(mat):
 		mats.append(mat)
 

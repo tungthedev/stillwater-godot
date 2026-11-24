@@ -23,6 +23,11 @@ static func value(name: String, fallback: String = "") -> String:
 	return fallback
 
 
+# Art-style switch: ?style=painterly|classic (default painterly).
+static func style() -> String:
+	return "classic" if value("style", "painterly").to_lower() == "classic" else "painterly"
+
+
 # Web: can this browser render to float colour buffers (what the RGBA16F scene target needs)?
 # Desktop GL always can.
 static func float_targets() -> bool:

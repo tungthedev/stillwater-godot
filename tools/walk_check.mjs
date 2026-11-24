@@ -35,7 +35,8 @@ console.log('renderer', renderer);
 fs.mkdirSync(OUT, { recursive: true });
 
 // Sky and the far haze are bright, low-saturation, blue-leaning; grass, dirt, rock and forest floor
-// are not. The scene's lake can be blue, but never this close to the walker on the trail.
+// are not. The scene's lake can be blue, but never this close to the walker on the trail. Violet
+// lupin spikes in the foreground are bright and blue-leaning too, but redder than green; sky never is.
 async function skyShare(page, b64) {
   return page.evaluate(async (src) => {
     const img = new Image();
@@ -50,7 +51,7 @@ async function skyShare(page, b64) {
     let sky = 0;
     for (let i = 0; i < d.length; i += 4) {
       const r = d[i], gg = d[i + 1], b = d[i + 2];
-      if (b >= 150 && b > r + 8 && b >= gg && Math.min(r, gg) >= 110) sky++;
+      if (b >= 150 && b > r + 8 && b >= gg && gg >= r - 8 && Math.min(r, gg) >= 110) sky++;
     }
     return sky / (d.length / 4);
   }, b64);

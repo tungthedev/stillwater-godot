@@ -16,6 +16,12 @@ uniform vec3 light_col = vec3(6.682, 5.161, 3.476);
 uniform float exposure = 0.6;
 // 1: the post chain grades (systems/post.gd), so objects write scene-linear HDR; 0: graded here.
 uniform float post_on = 0.0;
+// 1: painterly look; 0: classic port of Stillwater (?style=classic). Set by environment.gd.
+uniform float painterly = 1.0;
+// Sky and horizon styling, set from environment.gd so a time of day can drive them.
+uniform vec3 horizon_tint = vec3(0.95, 0.99, 1.07);
+uniform float sky_sat = 1.38;
+uniform float horizon_haze = 0.34;
 // Stillwater's grade at hour 16 (env.js grade, post.js vignette). Constants rather than uniforms:
 // Godot leaves sky-shader uniform defaults unset (zero) in this renderer.
 const vec3 shadow_tint = vec3(0.90, 0.95, 1.14);
@@ -46,11 +52,40 @@ vec2 w_lut_uv(vec3 dir) {
 }
 
 vec3 w_sky(vec3 dir) {
-	return min(max(textureLod(sky_lut, w_lut_uv(dir), 0.0).rgb, vec3(0.0)), vec3(40.0));
+	vec3 c = textureLod(sky_lut, w_lut_uv(dir), 0.0).rgb;
+	// Guard NaN/Inf before clamping so bloom never explodes into squares.
+	c = mix(c, vec3(0.0), isnan(c));
+	return clamp(c, vec3(0.0), vec3(40.0));
 }
 
 float w_luma(vec3 c) {
 	return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// Styled sky base shared by sky.gdshader and w_horizon_color so far terrain fog matches the sky.
+vec3 w_sky_base(vec3 dir) {
+	vec3 col = w_sky(vec3(dir.x, max(dir.y, -0.02), dir.z));
+	float lum_s = w_luma(col);
+	float sat = painterly > 0.5 ? sky_sat : 1.40;
+	col = mix(vec3(lum_s), col, sat);
+	float hz = exp(-max(dir.y, 0.0) * 8.5);
+	vec3 h_tint = painterly > 0.5 ? horizon_tint : vec3(0.96, 1.0, 1.04);
+	float h_mix = painterly > 0.5 ? horizon_haze : 0.32;
+	col = mix(col, vec3(lum_s) * h_tint * 1.15, hz * h_mix);
+	col = max(col, vec3(0.0));
+	col.g = min(col.g, (col.r + col.b) * 0.6);
+	return clamp(col, vec3(0.0), vec3(40.0));
+}
+
+// Shared horizon-matched sky colour (base sky + broad sun halo) used by w_atmosphere and clouds
+// so distant slopes fade seamlessly into the exact sky colour behind them.
+vec3 w_horizon_color(vec3 dir) {
+	vec3 d = normalize(vec3(dir.x, max(dir.y, -0.02), dir.z));
+	vec3 col = w_sky_base(d);
+	float mu = dot(d, sun_dir);
+	col += sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
+	col = mix(col, vec3(0.0), isnan(col));
+	return clamp(col, vec3(0.0), vec3(40.0));
 }
 
 vec3 styl_tone(vec3 x) {
@@ -98,21 +133,28 @@ vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
 		col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45);
 	}
 	float Lg = w_luma(col);
-	col *= mix(shadow_tint, vec3(1.04, 1.0, 0.94), smoothstep(0.08, 0.68, Lg));
-	col = mix(col, vec3(Lg) * vec3(0.95, 0.96, 1.08), (1.0 - smoothstep(0.04, 0.36, Lg)) * 0.16);
+	vec3 s_tint = painterly > 0.5 ? vec3(0.88, 0.90, 1.20) : shadow_tint;
+	vec3 s_cast = painterly > 0.5 ? vec3(0.93, 0.92, 1.14) : vec3(0.95, 0.96, 1.08);
+	vec3 lift = painterly > 0.5 ? vec3(0.006, 0.006, 0.016) : grade_lift;
+	float sat = painterly > 0.5 ? 1.12 : grade_sat;
+	float contrast = painterly > 0.5 ? 0.08 : grade_contrast;
+	float vig = painterly > 0.5 ? 0.24 : vignette;
+	col *= mix(s_tint, vec3(1.04, 1.0, 0.94), smoothstep(0.08, 0.68, Lg));
+	col = mix(col, vec3(Lg) * s_cast, (1.0 - smoothstep(0.04, 0.36, Lg)) * 0.16);
 	float L = w_luma(col);
-	col = mix(vec3(L), col, grade_sat);
-	col = col + grade_lift * (1.0 - col);
+	col = mix(vec3(L), col, sat);
+	col = col + lift * (1.0 - col);
 	col = clamp(col, 0.0, 1.0);
-	col = mix(col, col * col * (3.0 - 2.0 * col), grade_contrast);
+	col = mix(col, col * col * (3.0 - 2.0 * col), contrast);
 	vec2 vv = (screen_uv - 0.5) * vec2(viewport.x / viewport.y, 1.0);
-	col *= clamp(1.0 - dot(vv, vv) * vignette, 0.0, 1.0);
+	col *= clamp(1.0 - dot(vv, vv) * vig, 0.0, 1.0);
 	return to_srgb(col);
 }
 
 vec3 w_grade(vec3 col, vec2 screen_uv, vec2 viewport) {
+	col = mix(col, vec3(0.0), isnan(col));
 	if (post_on > 0.5) {
-		return godot_out(min(col, vec3(200.0)));
+		return godot_out(clamp(col, vec3(0.0), vec3(200.0)));
 	}
 	return godot_out(w_grade_ldr(col, screen_uv, viewport));
 }

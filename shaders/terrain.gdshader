@@ -377,13 +377,9 @@ void fragment() {
 
 	// ---- lighting (patch.js RE_Direct_Toon with toonWrap 0.14, lo 0.24, hi 0.40) ----
 	float sun_vis = w_cloud_shadow(wp, cam);
-	float w = (dot(n, sun_dir) + 0.14) / 1.14;
-	float ramp_near = smoothstep(0.24, 0.40, w);
-	float ramp_far = smoothstep(0.06, 0.13, w) * 0.38 + smoothstep(0.36, 0.44, w) * 0.62;
-	float ramp = mix(ramp_near, ramp_far, smoothstep(1150.0, 2300.0, dist));
+	float ramp = w_toon_ramp(dot(n, sun_dir), 0.14, 0.24, 0.40, dist);
 	vec3 direct = ramp * light_col * sun_vis * albedo / PI;
-	vec3 ind = mix(hemi_ground, hemi_sky, n.y * 0.5 + 0.5) * albedo;
-	ind = max(mix(vec3(w_luma(ind)), ind, 1.28), 0.0) * vec3(0.95, 1.00, 1.15) * 1.07;
+	vec3 ind = w_indirect(n, albedo);
 
 	// ---- emissive extras ----
 	vec3 emis = vec3(0.0);
@@ -415,11 +411,12 @@ void fragment() {
 		if (highPeakOnly > 0.0) {
 			float rim = pow(1.0 - max(dot(n, Vw), 0.0), 2.8) * highPeakOnly;
 			float sunSide = smoothstep(0.02, 0.58, dot(n, sun_dir));
-			emis += light_col * vec3(1.0, 0.95, 0.86) * rim * sunSide * 0.08 * sun_vis * smoothstep(0.0, 0.12, sun_dir.y);
+			float rim_k = painterly > 0.5 ? 0.04 : 0.08;
+			emis += light_col * vec3(1.0, 0.95, 0.86) * rim * sunSide * rim_k * sun_vis * smoothstep(0.0, 0.12, sun_dir.y);
 		}
 	}
 
-	vec3 lit = direct + ind + emis;
+	vec3 lit = w_light_floor(direct + ind + emis, albedo);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(wp, cam, atm_mul, atm_add);

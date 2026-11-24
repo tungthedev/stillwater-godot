@@ -11,13 +11,16 @@ extends Node3D
 # out; the wrap into the 28 km tile is applied once here.
 
 const VegScatter := preload("res://world/veg_scatter.gd")
+const Flags := preload("res://systems/flags.gd")
 const COUNT := 12
 const DETAIL := 1
 const WRAP := 28000.0
+const PAINTERLY_SCALE := 1.22
 
 var world: RefCounted
 var mat: ShaderMaterial
 var mmi: MultiMeshInstance3D
+var painterly := true
 var puffs := 0
 var tris := 0
 
@@ -27,13 +30,14 @@ func setup(w: RefCounted) -> void:
 
 
 func _ready() -> void:
+	painterly = Flags.style() != "classic"
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/clouds.gdshader")
 	mat.set_shader_parameter("noise_tex", world.noise_tex)
 	mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
-	var mesh := _icosphere(DETAIL)
+	var mesh := _octagon() if painterly else _icosphere(DETAIL)
 	mesh.surface_set_material(0, mat)
-	var list := _puffs(COUNT)
+	var list := _puffs_painterly(COUNT) if painterly else _puffs(COUNT)
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_custom_data = true
@@ -128,6 +132,42 @@ static func _puffs(count: int) -> Array:
 			var y: float = base_w + r * 0.32 + pow(dome, 0.85) * hgt * (0.34 + 0.66 * rnd.call())
 			out.append([x, y, z, r, cx, top, cz, base_w, rnd.call() * 10.0])
 	return out
+
+
+# Same seeded cloud banks and silhouette as _puffs, thinned to half the puffs at slightly larger
+# radius for lightweight painterly billboards (~4.4k tris vs 88.9k classic).
+static func _puffs_painterly(count: int) -> Array:
+	var full := _puffs(count)
+	var out := []
+	for i in full.size():
+		if i % 2 == 0:
+			var p: Array = full[i].duplicate()
+			p[3] = float(p[3]) * PAINTERLY_SCALE
+			out.append(p)
+	return out
+
+
+# Regular octagon circumscribing the unit disc (8 triangles, clockwise seen from +Z).
+static func _octagon() -> ArrayMesh:
+	const SIDES := 8
+	var r := 1.0 / cos(PI / float(SIDES))
+	var verts := PackedVector3Array()
+	verts.append(Vector3.ZERO)
+	for i in SIDES:
+		var a := float(i) * TAU / float(SIDES)
+		verts.append(Vector3(cos(a) * r, sin(a) * r, 0.0))
+	var idx := PackedInt32Array()
+	for i in SIDES:
+		var cur := i + 1
+		var nxt := ((i + 1) % SIDES) + 1
+		idx.append_array([0, nxt, cur])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 # three.js IcosahedronGeometry(1, detail): each face split into (detail + 1)^2 triangles, every

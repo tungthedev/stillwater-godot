@@ -83,6 +83,7 @@ func setup(env_node: Node, float_targets: bool) -> void:
 	comp_mat.set_shader_parameter("t_scene", scene_vp.get_texture())
 	comp_mat.set_shader_parameter("t_bloom", up[0].get_texture())
 	comp_mat.set_shader_parameter("exposure", env_sys.EXPOSURE)
+	comp_mat.set_shader_parameter("painterly", 1.0 if env_sys.painterly else 0.0)
 	rect.material = comp_mat
 	comp_layer.add_child(rect)
 	add_child(comp_layer)

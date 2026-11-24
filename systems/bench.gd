@@ -291,8 +291,12 @@ func _report() -> void:
 	var p50: float = sorted[int(sorted.size() * 0.5)]
 	var p95: float = sorted[int(sorted.size() * 0.95)]
 	var size := DisplayServer.window_get_size()
-	var line := "BENCH pose=%s size=%dx%d frames=%d avg_fps=%.1f p50_ms=%.1f p95_ms=%.1f max_draws=%d max_tris=%d terrain_tris=%d terrain_nodes=%d trees=%s tree_tris=%d tree_draws=%d grass=%s grass_tris=%d grass_draws=%d" % [
-		pose_name, size.x, size.y, frame_ms.size(), 1000.0 / avg, p50, p95, draws_max, prims_max, terrain_tris_max, terrain_nodes_max, "on" if trees_sys.is_on() else "off", tree_tris_max, tree_draws_max, "on" if grass_sys.is_on() else "off", grass_tris_max, grass_draws_max]
+	var st: Dictionary = settings.call() if settings.is_valid() else {}
+	var style_name := str(st.get("style", "painterly"))
+	var tricks_arr: Array = st.get("style_tricks", [])
+	var tricks_str := ",".join(PackedStringArray(tricks_arr)) if not tricks_arr.is_empty() else "none"
+	var line := "BENCH pose=%s size=%dx%d frames=%d avg_fps=%.1f p50_ms=%.1f p95_ms=%.1f max_draws=%d max_tris=%d terrain_tris=%d terrain_nodes=%d trees=%s tree_tris=%d tree_draws=%d grass=%s grass_tris=%d grass_draws=%d cloud_tris=%d style=%s tricks=%s" % [
+		pose_name, size.x, size.y, frame_ms.size(), 1000.0 / avg, p50, p95, draws_max, prims_max, terrain_tris_max, terrain_nodes_max, "on" if trees_sys.is_on() else "off", tree_tris_max, tree_draws_max, "on" if grass_sys.is_on() else "off", grass_tris_max, grass_draws_max, clouds_sys.tris, style_name, tricks_str]
 	print(line)
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval("window.__bench = %s;" % JSON.stringify(line))

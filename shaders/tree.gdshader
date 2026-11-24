@@ -93,6 +93,7 @@ void fragment() {
 		discard;
 	}
 
+	vec3 base_albedo = dcol;
 	if (bark) {
 		float angB = atan(v_wn.z, v_wn.x);
 		float bRidge = n_noise(vec2(angB * 5.5 + v_wpos.y * 0.32, v_wpos.y * 1.15));
@@ -114,8 +115,9 @@ void fragment() {
 			float mossW = hMoss * nMoss * (0.45 + 0.55 * smoothstep(0.2, 0.6, w_biome(v_wpos.xz).r));
 			dcol = mix(dcol, vec3(0.075, 0.24, 0.048) * (0.78 + 0.44 * bFine), mossW * 0.82);
 		}
+		base_albedo = dcol;
 	} else {
-		// Painterly crown: cool shadow side, warm lit side, dark pockets between clumps.
+		// Painterly crown: cool shadow side, warm lit side, soft pockets between clumps.
 		vec3 Nw = normalize(v_wn);
 		float sunSide = clamp(dot(Nw, sun_dir) * 0.5 + 0.5, 0.0, 1.0);
 		float coreAO = clamp(v_crown.x, 0.26, 1.08);
@@ -123,12 +125,14 @@ void fragment() {
 		float sprigN = n_noise(v_wpos.xz * 0.85 + v_wpos.y * 0.65);
 		float litMask = smoothstep(0.20, 0.78, sunSide * 0.62 + topG * 0.28 + (sprigN - 0.5) * 0.26);
 		float isWarmLeaf = smoothstep(0.82, 1.08, dcol.r / max(dcol.g, 0.01));
-		vec3 coolGreen = dcol * vec3(0.46, 0.82, 1.24);
+		vec3 coolGreen = dcol * (painterly > 0.5 ? vec3(0.54, 0.88, 1.22) : vec3(0.46, 0.82, 1.24));
 		vec3 warmSienna = dcol * vec3(0.84, 0.54, 0.34);
 		vec3 shadowTone = mix(coolGreen, warmSienna, isWarmLeaf);
 		vec3 warmShift = dcol * vec3(1.18, 1.22, 0.72);
 		vec3 volCol = mix(shadowTone, warmShift, litMask);
-		volCol *= mix(0.22, 1.18, smoothstep(0.20, 0.94, coreAO) * (0.62 + 0.38 * topG));
+		float ao_lo = painterly > 0.5 ? 0.42 : 0.22;
+		float ao_hi = painterly > 0.5 ? 1.20 : 1.18;
+		volCol *= mix(ao_lo, ao_hi, smoothstep(0.20, 0.94, coreAO) * (0.62 + 0.38 * topG));
 		float pvar = texture(noise_tex, v_wpos.xz * 0.16 + v_wpos.y * 0.12).g;
 		volCol *= 0.82 + 0.34 * (pvar * 0.6 + sprigN * 0.4);
 		dcol = volCol;
@@ -151,12 +155,13 @@ void fragment() {
 		float sunEdge = smoothstep(-0.18, 0.52, dot(nW, sun_dir));
 		vec3 transTint = vec3(0.95, 1.02, 0.68);
 		float edgeMask = 0.35 + 0.65 * v_crown.x;
+		float rim_k = painterly > 0.5 ? 0.07 : 0.09;
 		emis += dcol * light_col * transTint * back * 0.20 * edgeMask * lit * isLeaf;
-		emis += dcol * 1.18 * light_col * rim * 0.09 * (0.35 + 0.65 * sunEdge) * lit * isLeaf;
+		emis += dcol * 1.18 * light_col * rim * rim_k * (0.35 + 0.65 * sunEdge) * lit * isLeaf;
 		emis += dcol * vec3(0.84, 1.0, 0.74) * 0.036 * length(light_col) * isLeaf * (0.4 + 0.6 * v_crown.x);
 	}
 
-	vec3 lit = direct + ind + emis;
+	vec3 lit = w_light_floor(direct + ind + emis, base_albedo);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(v_wpos, cam, atm_mul, atm_add);

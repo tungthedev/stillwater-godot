@@ -136,7 +136,7 @@ void fragment() {
 	vec3 n = vec3(0.0, 1.0, 0.0);
 	float sun_vis = w_cloud_shadow(v_wpos, cam);
 	float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.18, 0.62, length(v_wpos - cam));
-	vec3 lit = ramp * light_col * sun_vis * dcol / PI + w_indirect(n, dcol);
+	vec3 lit = w_light_floor(ramp * light_col * sun_vis * dcol / PI + w_indirect(n, dcol), dcol);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(v_wpos, cam, atm_mul, atm_add);

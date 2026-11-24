@@ -150,11 +150,12 @@ void fragment() {
 		vec3 Vw = normalize(v_wpos - cam);
 		float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
 		float lit_k = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
-		emis += v_col * light_col * vec3(1.0, 1.0, 0.90) * (back * 0.75 + 0.03 + v_wave * 0.05) * v_y * lit_k;
+		float back_k = painterly > 0.5 ? 0.45 : 0.75;
+		emis += v_col * light_col * vec3(1.0, 1.0, 0.90) * (back * back_k + 0.03 + v_wave * 0.05) * v_y * lit_k;
 		emis += v_col * vec3(0.9, 1.0, 0.6) * v_forest * 0.04 * length(light_col);
 	}
 
-	vec3 lit = direct + ind + emis;
+	vec3 lit = w_light_floor(direct + ind + emis, dcol);
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(v_wpos, cam, atm_mul, atm_add);

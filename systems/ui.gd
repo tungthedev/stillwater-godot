@@ -199,6 +199,8 @@ func settings() -> Dictionary:
 		"shadow": env_sys.sun.shadow_enabled,
 		"grass": grass_sys.is_on(),
 		"trees": trees_sys.is_on(),
+		"style": env_sys.style,
+		"style_tricks": env_sys.active_tricks(),
 		"frame_cap": "rAF (display rate, 60 on iPhone)" if OS.has_feature("web") else "none (vsync off)",
 	}
 
@@ -282,8 +284,11 @@ func _show_results(r: Dictionary) -> void:
 		panel_box.add_child(_row([s.stage, "%.1f" % s.fps, "%.1f" % s.p50_ms, "%.1f" % s.p95_ms, "%.2fM" % (s.tris / 1.0e6), s.draws], 15, Color.WHITE))
 	panel_box.add_child(_text(r.verdict, 16, Color(0.55, 0.95, 0.6) if ok else Color(1.0, 0.6, 0.45)))
 	_timing_rows(r)
-	var info := "%d x %d internal of %d x %d screen (Res %s, scale %.3f), dpr %s\nPost %s · Dist %s%% · Dens %d%% · Shadow %s · Grass %s · Trees %s\nTarget %s · frame cap %s\n%s\n%s · build %s" % [
+	var tricks_arr: Array = r.get("style_tricks", [])
+	var tricks_str := ", ".join(PackedStringArray(tricks_arr)) if not tricks_arr.is_empty() else "none"
+	var info := "%d x %d internal of %d x %d screen (Res %s, scale %.3f), dpr %s\nStyle %s (%s) · clouds %d tris\nPost %s · Dist %s%% · Dens %d%% · Shadow %s · Grass %s · Trees %s\nTarget %s · frame cap %s\n%s\n%s · build %s" % [
 		r.internal[0], r.internal[1], r.screen[0], r.screen[1], r.res, r.scale, str(r.dpr),
+		str(r.get("style", "painterly")), tricks_str, int(r.get("clouds_tris", 0)),
 		"on" if r.post else "off", r.dist, r.dens, "on" if r.shadow else "off", "on" if r.grass else "off", "on" if r.trees else "off",
 		r.target, r.frame_cap, r.renderer, r.engine, r.build]
 	panel_box.add_child(_text(info, 11, Color(0.85, 0.87, 0.9)))
@@ -366,6 +371,6 @@ func _tick(_delta: float) -> void:
 	progress.text = ("Bench  " + bench_sys.progress) if bench_sys.running else ""
 	if not dev_on:
 		return
-	label.text = "%d fps  %d x %d of %d x %d  post %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [
-		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off",
+	label.text = "%d fps  %d x %d of %d x %d  post %s  style %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [
+		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off", env_sys.style,
 		bench_sys.last_draws, bench_sys.last_prims / 1.0e6, terrain_sys.last_tris / 1.0e6, trees_sys.last_tris / 1.0e6, grass_sys.last_tris / 1.0e6]

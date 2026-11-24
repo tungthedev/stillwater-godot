@@ -3,8 +3,13 @@
 // indirect tint of src/patch.js. Needs stillwater.gdshaderinc first.
 
 uniform float water_level = 22.0;
-uniform vec3 hemi_sky = vec3(0.4036, 0.6208, 0.9223);
-uniform vec3 hemi_ground = vec3(0.2488, 0.2827, 0.2194);
+uniform vec3 hemi_sky = vec3(0.41, 0.58, 0.94);
+uniform vec3 hemi_ground = vec3(0.34, 0.35, 0.56);
+// Painterly ambient and light floor; set from environment.gd so a time of day can drive them.
+uniform vec3 shadow_ambient_tint = vec3(0.92, 0.92, 1.20);
+uniform float ambient_boost = 1.12;
+uniform vec3 light_floor_col = vec3(0.42, 0.50, 0.72);
+uniform float light_floor = 0.45;
 uniform vec3 fog_beta = vec3(2.4e-5, 4.6e-5, 1.18e-4);
 uniform float fog_falloff = 0.00086957;
 uniform float mist = 0.028;
@@ -12,15 +17,39 @@ uniform float cloud_cover = 0.329;
 uniform vec2 cloud_offset = vec2(-223.16, -143.45);
 uniform vec2 wind_dir = vec2(0.8253, 0.5646);
 
-// MeshStandardMaterial's hemisphere irradiance (light intensity pi) through patch.js's cool,
-// saturated indirect tint at daytime.
+// Light floor: lit surfaces never drop below a cool share of their albedo, so foliage and ground
+// keep their colour in deep shade and at low sun.
+vec3 w_light_floor(vec3 lit, vec3 albedo) {
+	if (painterly < 0.5) {
+		return lit;
+	}
+	vec3 floor_alb = mix(albedo, vec3(w_luma(albedo)), 0.30);
+	return max(lit, floor_alb * light_floor_col * light_floor);
+}
+
+// Indirect hemisphere fill with cool blue-violet shadows and explicit light floor in painterly mode.
 vec3 w_indirect(vec3 n, vec3 albedo) {
+	if (painterly > 0.5) {
+		float sky_k = smoothstep(-0.35, 0.85, n.y);
+		vec3 hemi = mix(hemi_ground, hemi_sky, sky_k);
+		vec3 soft_alb = mix(albedo, vec3(w_luma(albedo)), 0.18 * (1.0 - sky_k));
+		vec3 ind = hemi * soft_alb;
+		ind = max(mix(vec3(w_luma(ind)), ind, 1.18), 0.0) * shadow_ambient_tint * ambient_boost;
+		return w_light_floor(ind, albedo);
+	}
 	vec3 ind = mix(hemi_ground, hemi_sky, n.y * 0.5 + 0.5) * albedo;
 	return max(mix(vec3(w_luma(ind)), ind, 1.28), 0.0) * vec3(0.95, 1.00, 1.15) * 1.07;
 }
 
 // patch.js RE_Direct_Toon diffuse ramp for a material's (wrap, lo, hi); dist is camera distance.
 float w_toon_ramp(float ndl, float wrap, float lo, float hi, float dist) {
+	if (painterly > 0.5) {
+		float wp = wrap + 0.14;
+		float w = (ndl + wp) / (1.0 + wp);
+		float ramp_near = smoothstep(max(0.0, lo - 0.05), min(1.0, hi + 0.10), w);
+		float ramp_far = smoothstep(0.04, 0.18, w) * 0.40 + smoothstep(0.34, 0.50, w) * 0.60;
+		return mix(ramp_near, ramp_far, smoothstep(1150.0, 2300.0, dist));
+	}
 	float w = (ndl + wrap) / (1.0 + wrap);
 	float ramp_near = smoothstep(lo, hi, w);
 	float ramp_far = smoothstep(0.06, 0.13, w) * 0.38 + smoothstep(0.36, 0.44, w) * 0.62;
@@ -58,6 +87,39 @@ void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 	float dy = yb - ya;
 	float avg_d = abs(dy) > 0.5 ? (exp(-max(min(ya, yb), 0.0) * mf) - exp(-max(max(ya, yb), 0.0) * mf)) / (abs(dy) * mf) : exp(-max(ya, 0.0) * mf);
 	float extm = exp(-mist * dist * avg_d * 0.0018);
+
+	if (painterly > 0.5) {
+		// Sky-matched horizon fog: uses the exact shared w_horizon_color(dir) as sky.gdshader
+		// so distant slopes and the map edge melt into the sky without a seam.
+		vec3 hor_col = w_horizon_color(dir);
+		vec3 airy_col = hor_col * vec3(0.95, 0.96, 1.06);
+		vec3 mist_col = mix(hor_col, hor_col * vec3(0.94, 0.97, 1.08), 0.45);
+
+		atm_mul = ext * extm;
+		atm_add = (hor_col * (1.0 - ext)) * extm + mist_col * (1.0 - extm);
+
+		if (dist > 1450.0) {
+			float high_look = smoothstep(200.0, 380.0, cam.y) * smoothstep(0.05, -0.18, dir.y);
+			float low_basin = exp(-max(wp.y - water_level - 18.0, 0.0) / 260.0);
+			float peak_crisp = 1.0 - 0.38 * smoothstep(520.0, 1450.0, wp.y);
+			float a1 = clamp(smoothstep(1450.0, 3800.0, dist) * (0.10 + 0.30 * low_basin) * peak_crisp * (1.0 - 0.56 * high_look), 0.0, 0.40);
+			atm_mul *= 1.0 - a1;
+			atm_add = atm_add * (1.0 - a1) + airy_col * a1;
+			float a2 = clamp(smoothstep(3600.0, 8200.0, dist) * (0.18 + 0.18 * low_basin) * peak_crisp, 0.0, 0.42);
+			vec3 far_col = mix(airy_col, hor_col, smoothstep(4500.0, 10500.0, dist));
+			atm_mul *= 1.0 - a2;
+			atm_add = atm_add * (1.0 - a2) + far_col * a2;
+			// Smoothly dissolve the far horizon and far-map rim completely into the exact sky colour.
+			float map_edge = max(abs(wp.x), abs(wp.z));
+			float hor_fade = max(smoothstep(8500.0, 15200.0, dist), smoothstep(13600.0, 16000.0, map_edge));
+			hor_fade = clamp(hor_fade * hor_fade * (3.0 - 2.0 * hor_fade), 0.0, 1.0);
+			atm_mul *= 1.0 - hor_fade;
+			atm_add = mix(atm_add, hor_col, hor_fade);
+		}
+		atm_mul = clamp(mix(atm_mul, vec3(1.0), isnan(atm_mul)), vec3(0.0), vec3(1.0));
+		atm_add = clamp(mix(atm_add, vec3(0.0), isnan(atm_add)), vec3(0.0), vec3(40.0));
+		return;
+	}
 
 	vec3 hd = normalize(vec3(dir.x, max(dir.y, 0.0) * 0.8 + 0.04 + max(-dir.y, 0.0) * 0.55, dir.z));
 	vec3 insc = w_sky(hd);
