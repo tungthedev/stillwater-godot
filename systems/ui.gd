@@ -22,6 +22,7 @@ var sweep_sys: Node
 var cam: Camera3D
 var terrain_sys: Node
 var trees_sys: Node
+var water_sys: Node
 var post: Node
 var build_id := ""
 # In the game the readout and levers hide behind G / the pause sheet's Perf button (?debug shows
@@ -58,6 +59,7 @@ func setup(nodes: Dictionary) -> void:
 	cam = nodes.cam
 	terrain_sys = nodes.terrain
 	trees_sys = nodes.trees
+	water_sys = nodes.get("water", null)
 	post = nodes.post
 	build_id = nodes.build
 	game = nodes.get("game", false)
@@ -237,6 +239,9 @@ func settings() -> Dictionary:
 		"shadow": env_sys.sun.shadow_enabled,
 		"grass": grass_sys.is_on(),
 		"trees": trees_sys.is_on(),
+		"water": water_sys != null and water_sys.is_on(),
+		"water_tris": water_sys.last_tris if water_sys != null else 0,
+		"water_draws": water_sys.last_draws if water_sys != null else 0,
 		"style": env_sys.style,
 		"ground": terrain_sys.ground_mode(),
 		"grass_mode": grass_sys.grass_mode(),

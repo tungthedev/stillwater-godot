@@ -248,6 +248,38 @@ func pose(stop: String) -> Dictionary:
 	return meta.poses.stops[stop]
 
 
+func has_pose(stop: String) -> bool:
+	return meta.poses.stops.has(stop)
+
+
+func lake_info() -> Dictionary:
+	if meta.has("water") and meta.water.has("lake"):
+		return meta.water.lake
+	if meta.has("game") and meta.game.has("lake"):
+		return meta.game.lake
+	return {}
+
+
+func stream_points() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if meta.has("water") and meta.water.stream != null:
+		for p in meta.water.stream.points:
+			out.append(Vector2(p[0], p[1]))
+	return out
+
+
+func stream_brink() -> int:
+	if meta.has("water") and meta.water.stream != null and meta.water.stream.brink != null:
+		return int(meta.water.stream.brink)
+	return -1
+
+
+func waterfall_info() -> Dictionary:
+	if meta.has("water") and meta.water.waterfall != null:
+		return meta.water.waterfall
+	return {}
+
+
 func walk_points() -> PackedVector2Array:
 	var out := PackedVector2Array()
 	for p in meta.walk:

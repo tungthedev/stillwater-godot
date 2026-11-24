@@ -26,6 +26,7 @@ const WINDOW_MAX_S := 6.0
 var env_sys: Node
 var post: Node
 var terrain_sys: Node
+var water_sys: Node
 var trees_sys: Node
 var grass_sys: Node
 var clouds_sys: Node
@@ -73,6 +74,7 @@ var _base_ground_live := false
 var _base_grass := true
 var _base_grass_painted := true
 var _base_trees := true
+var _base_water := true
 var _base_clouds := true
 var _base_cloud_billboard := false
 var _base_sky_clouds := true
@@ -91,6 +93,7 @@ func setup(nodes: Dictionary) -> void:
 	env_sys = nodes.env
 	post = nodes.post
 	terrain_sys = nodes.terrain
+	water_sys = nodes.get("water", null)
 	trees_sys = nodes.trees
 	grass_sys = nodes.grass
 	clouds_sys = nodes.clouds
@@ -125,6 +128,7 @@ func start() -> void:
 	_base_grass = grass_sys.is_on()
 	_base_grass_painted = grass_sys.is_painted()
 	_base_trees = trees_sys.is_on()
+	_base_water = water_sys != null and water_sys.is_on()
 	_base_cloud_billboard = clouds_sys.is_on()
 	_base_sky_clouds = env_sys.sky_clouds_on
 	_base_clouds = _base_cloud_billboard or _base_sky_clouds
@@ -150,7 +154,7 @@ func _pick_poses() -> Array[String]:
 	var out: Array[String] = []
 	for p in raw.split(","):
 		var s := p.strip_edges()
-		if s == "trailhead" or s == "forest":
+		if s == "trailhead" or s == "forest" or (cam != null and cam.world != null and cam.world.has_pose(s)):
 			out.append(s)
 	return out if not out.is_empty() else DEFAULT_POSES.duplicate()
 
@@ -210,6 +214,10 @@ func _build_variants() -> void:
 	else:
 		_skipped.append("trees_off (base trees off)")
 		_skipped.append("impostors_off (base trees off)")
+	if _base_water:
+		_variants.append({"id": "water_off", "label": "water off", "disjoint": true})
+	else:
+		_skipped.append("water_off (base water off)")
 	_variants.append({"id": "sky_flat", "label": "sky flat", "disjoint": true})
 	if _base_clouds:
 		_variants.append({"id": "clouds_off", "label": "clouds off", "disjoint": true})
@@ -258,6 +266,8 @@ func _reset_to_base() -> void:
 	grass_sys.set_flowers_on(true)
 	trees_sys.set_on(_base_trees)
 	trees_sys.set_impostors_on(true)
+	if water_sys != null:
+		water_sys.set_on(_base_water)
 	env_sys.set_sky_flat(false)
 	env_sys.set_cirrus_on(true)
 	env_sys.set_sky_clouds_on(_base_sky_clouds)
@@ -276,6 +286,8 @@ func _apply_variant(id: String) -> void:
 			pass
 		"floor":
 			terrain_sys.set_on(false)
+			if water_sys != null:
+				water_sys.set_on(false)
 			grass_sys.set_on(false)
 			trees_sys.set_on(false)
 			trees_sys.set_impostors_on(false)
@@ -318,6 +330,9 @@ func _apply_variant(id: String) -> void:
 			trees_sys.set_on(false)
 		"impostors_off":
 			trees_sys.set_impostors_on(false)
+		"water_off":
+			if water_sys != null:
+				water_sys.set_on(false)
 		"sky_flat":
 			env_sys.set_sky_flat(true)
 		"clouds_off":
@@ -351,7 +366,7 @@ func _apply_variant(id: String) -> void:
 func _begin_pose() -> void:
 	var pose := _poses[_pose_i]
 	_reset_to_base()
-	cam.set_mode(cam.MODES.find(pose))
+	cam.set_pose_name(pose)
 	_schedule.clear()
 	_step_records.clear()
 	# Interleave: base, V0, base, V1, ..., base, V_{K-1}, base.

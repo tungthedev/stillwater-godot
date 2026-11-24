@@ -34,6 +34,10 @@ func _init() -> void:
 	terrain.set_script(load("res://systems/terrain.gd"))
 	terrain.setup(world)
 	vp.add_child(terrain)
+	var water := Node3D.new()
+	water.set_script(load("res://systems/water.gd"))
+	water.setup(world)
+	vp.add_child(water)
 	var trees := Node3D.new()
 	trees.set_script(load("res://systems/trees.gd"))
 	trees.setup(world)
@@ -59,7 +63,7 @@ func _init() -> void:
 	for view in views:
 		vp.size = view
 		await process_frame
-		for stop in ["trailhead", "forest"]:
+		for stop in ["trailhead", "forest", "lake"]:
 			var s: Dictionary = world.pose(stop)
 			cam.position = Vector3(s.position[0], s.position[1], s.position[2])
 			cam.rotation = Vector3(float(s.pitch), float(s.yaw), 0.0)
@@ -67,12 +71,12 @@ func _init() -> void:
 			trees.update_lod(cam.position, true)
 			trees.count_drawn(cam)
 			grass.update_rings(cam, true)
-			var tris: int = nodes * terrain.tris_per_node + trees.last_tris + grass.last_tris + clouds.tris + OTHER_TRIS
-			var draws: int = terrain.last_draws + trees.last_draws + grass.last_draws + clouds.last_draws + OTHER_DRAWS
-			var pass_: bool = tris <= TRIS and draws <= DRAWS and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
+			var tris: int = nodes * terrain.tris_per_node + water.last_tris + trees.last_tris + grass.last_tris + clouds.tris + OTHER_TRIS
+			var draws: int = terrain.last_draws + water.last_draws + trees.last_draws + grass.last_draws + clouds.last_draws + OTHER_DRAWS
+			var pass_: bool = tris <= TRIS and draws <= DRAWS and water.last_draws <= 3 and water.last_tris > 0 and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
 			ok = ok and pass_
-			print("budget %s %dx%d: terrain %d + trees %d + grass %d + clouds %d = %d triangles, %d draws (trees %d, grass %d; hero %d, mid %d, impostor %d trees; grass tiles %d near + %d far, flower tiles %d) %s" % [
-				stop, view.x, view.y, nodes * terrain.tris_per_node, trees.last_tris, grass.last_tris, clouds.tris, tris, draws, trees.last_draws, grass.last_draws,
+			print("budget %s %dx%d: terrain %d + water %d (%d draws) + trees %d + grass %d + clouds %d = %d triangles, %d draws (trees %d, grass %d; hero %d, mid %d, impostor %d trees; grass tiles %d near + %d far, flower tiles %d) %s" % [
+				stop, view.x, view.y, nodes * terrain.tris_per_node, water.last_tris, water.last_draws, trees.last_tris, grass.last_tris, clouds.tris, tris, draws, trees.last_draws, grass.last_draws,
 				trees.stats.hero, trees.stats.mid, trees.stats.impostor, grass.grass.near_vis, grass.grass.far_vis, grass.flowers.near_vis, "ok" if pass_ else "OVER"])
 	print("FRAME_BUDGET %s (budget %d triangles, %d draws)" % ["PASS" if ok else "FAIL", TRIS, DRAWS])
 	quit(0 if ok else 1)

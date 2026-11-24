@@ -17,6 +17,7 @@ var world: RefCounted
 # The game (systems/session.gd) owns the camera; the bench takes it back while it runs.
 var external := false
 var mode_i := 0
+var pose_override := ""
 var t := 0.0
 var walk_pts := PackedVector2Array()
 var walk_dist := PackedFloat32Array()
@@ -41,7 +42,10 @@ func _ready() -> void:
 			acc += walk_pts[i].distance_to(walk_pts[i - 1])
 		walk_dist[i] = acc
 	var want := start_mode()
-	set_mode(maxi(0, MODES.find(want)))
+	if want != "" and MODES.find(want) < 0 and world.has_pose(want):
+		set_pose_name(want)
+	else:
+		set_mode(maxi(0, MODES.find(want)))
 
 
 static func start_mode() -> String:
@@ -67,14 +71,29 @@ static func _pitch_override() -> String:
 
 
 func mode() -> String:
-	return MODES[mode_i]
+	return pose_override if pose_override != "" else MODES[mode_i]
 
 
 func next_mode() -> void:
 	set_mode((mode_i + 1) % MODES.size())
 
 
+func set_pose_name(pose_name: String) -> void:
+	var idx := MODES.find(pose_name)
+	if idx >= 0:
+		set_mode(idx)
+		return
+	pose_override = pose_name
+	t = 0.0
+	var s: Dictionary = world.pose(pose_name)
+	position = Vector3(s.position[0], s.position[1], s.position[2])
+	var pitch_over := _pitch_override()
+	rotation = Vector3(float(s.pitch) if pitch_over.is_empty() else float(pitch_over), float(s.yaw), 0.0)
+	mode_changed.emit(mode())
+
+
 func set_mode(i: int) -> void:
+	pose_override = ""
 	mode_i = i
 	t = 0.0
 	if mode() != "walk":

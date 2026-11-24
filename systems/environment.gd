@@ -42,6 +42,7 @@ const PAINTERLY_TRICKS: Array[String] = [
 	"cheap_bark",
 	"puff_mid_crowns",
 	"painted_grass",
+	"painted_water",
 ]
 
 var style := "painterly"

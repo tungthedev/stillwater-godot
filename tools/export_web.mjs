@@ -215,12 +215,153 @@ const trail = paths.trail.points.map(([x, z]) => [+x.toFixed(2), +z.toFixed(2)])
 const game = {
   note: 'src/content/valley.js and the baked anchors; trail is the full trail (Player autoWalk and placeAtStart index it)',
   boundary: 1850,
-  lake: { x: -150, z: 200, rx: 340, rz: 230 },
+  lake: meta.lake,
   summit: extras.anchors.summit,
   pois: extras.anchors.pois,
   benches: extras.anchors.benches,
   trail,
 };
+
+// ---------- water: lake, stream path, and waterfall geometry (from src/world/water.js, stream.js, waterfall.js) ----------
+const streamPts = paths.stream ? paths.stream.points : [];
+const streamBrink = paths.stream?.brink ?? null;
+let waterfall = null;
+if (streamPts.length > 8) {
+  const sn = streamPts.length;
+  const sh = (x, z) => sampleGrid(near, nRes, meta.near.size, x, z);
+  let mi = 0, maxG = 0;
+  for (let i = 4; i < sn - 4; i++) {
+    const g = (sh(streamPts[i - 3][0], streamPts[i - 3][1]) - sh(streamPts[i + 3][0], streamPts[i + 3][1])) / 12;
+    if (g > maxG) { maxG = g; mi = i; }
+  }
+  if (maxG >= 0.35) {
+    let foot = mi;
+    while (foot < sn - 4) {
+      const a = sh(streamPts[foot][0], streamPts[foot][1]), b = sh(streamPts[foot + 3][0], streamPts[foot + 3][1]);
+      if ((a - b) / 6 < 0.16) break;
+      foot++;
+    }
+    let top = mi;
+    while (top > 3) {
+      const a = sh(streamPts[top - 3][0], streamPts[top - 3][1]), b = sh(streamPts[top][0], streamPts[top][1]);
+      if ((a - b) / 6 < 0.25) break;
+      top--;
+    }
+    const k = streamBrink ?? top;
+    const [bx, bz] = streamPts[k];
+    const j = Math.min(sn - 1, k + 3);
+    const ux0 = streamPts[j][0] - bx, uz0 = streamPts[j][1] - bz, ul = Math.hypot(ux0, uz0) || 1;
+    const ux = ux0 / ul, uz = uz0 / ul, lx = -uz, lz = ux;
+    const profH = (d, lat = 0) => sh(bx + ux * d + lx * lat, bz + uz * d + lz * lat);
+    let yCrest = -1e9;
+    for (let d = -16; d <= -2; d++) yCrest = Math.max(yCrest, profH(d, 0));
+    let dLip = -10;
+    for (let d = -14; d <= 6; d += 0.5) if (profH(d, 0) >= yCrest - 2.6) dLip = d;
+    const yBaseEst = profH(18, 0);
+    let dToe = dLip + 6;
+    for (let d = dLip + 2; d <= 20; d += 0.5) {
+      if (profH(d, 0) <= yBaseEst + 2.8) { dToe = d; break; }
+    }
+    const yTop = yCrest - 0.85;
+    const fi = Math.min(sn - 1, foot + 3);
+    const poolDist = Math.max(20.0, dToe + 15.5);
+    const poolX = bx + ux * poolDist, poolZ = bz + uz * poolDist;
+    const poolY = Math.max(sh(poolX, poolZ) + 2.35, sh(bx + ux * (poolDist + 16), bz + uz * (poolDist + 16)) + 0.52);
+    const landDist = Math.max(dToe + 5.2, poolDist - 6.0);
+    waterfall = {
+      brink: k,
+      footIdx: fi,
+      bx: +bx.toFixed(3), bz: +bz.toFixed(3),
+      ux: +ux.toFixed(6), uz: +uz.toFixed(6),
+      yTop: +yTop.toFixed(3),
+      dLip: +dLip.toFixed(2),
+      dToe: +dToe.toFixed(2),
+      poolDist: +poolDist.toFixed(2),
+      poolCenter: [+poolX.toFixed(3), +poolY.toFixed(3), +poolZ.toFixed(3)],
+      poolR: 25.0,
+      landDist: +landDist.toFixed(2),
+      impactPt: [+(bx + ux * landDist).toFixed(3), +poolY.toFixed(3), +(bz + uz * landDist).toFixed(3)],
+    };
+  }
+}
+const water = {
+  lake: meta.lake,
+  stream: streamPts.length ? {
+    brink: streamBrink,
+    points: streamPts.map(([x, z]) => [+x.toFixed(2), +z.toFixed(2)]),
+  } : null,
+  waterfall,
+};
+
+// ---------- water shot & bench poses (derived from world anchors and stream/waterfall geometry) ----------
+const eyeH = poses.eyeHeight;
+const makePose = (name, x, z, yaw, pitch) => {
+  const ground = sampleGrid(near, nRes, meta.near.size, x, z);
+  const eyeY = ground + eyeH;
+  const lookDist = 10;
+  return {
+    name,
+    position: [+x.toFixed(4), +eyeY.toFixed(4), +z.toFixed(4)],
+    ground: +ground.toFixed(4),
+    yaw: +yaw.toFixed(6),
+    pitch: +pitch.toFixed(6),
+    roll: 0,
+    eulerOrder: 'YXZ',
+    lookAt: [
+      +(x - Math.sin(yaw) * Math.cos(pitch) * lookDist).toFixed(4),
+      +(eyeY + Math.sin(pitch) * lookDist).toFixed(4),
+      +(z - Math.cos(yaw) * Math.cos(pitch) * lookDist).toFixed(4),
+    ],
+  };
+};
+const yawToward = (x, z, tx, tz) => Math.atan2(-(tx - x), -(tz - z));
+const webPoses = { ...poses, stops: { ...poses.stops } };
+// Lake wide: bench 0 overlooking Stillwater Lake toward the basin and far waterfall.
+{
+  const b0 = extras.anchors.benches[0];
+  const L = meta.lake;
+  webPoses.stops.lake = makePose('lake', b0.x, b0.z, yawToward(b0.x, b0.z, L.x, L.z), -0.06);
+}
+// Lake shore close: standing on the bare sandy eastern beach (below tall grass) looking diagonally
+// along the curving foam rim, turquoise shallows, deep sapphire basin, and mountains.
+{
+  const L = meta.lake;
+  const ang = -0.05;
+  const dx = Math.cos(ang), dz = Math.sin(ang);
+  let r = 460;
+  while (r > 50 && sampleGrid(near, nRes, meta.near.size, L.x + dx * r, L.z + dz * r) > meta.waterLevel + 0.18) r -= 0.5;
+  const sx = L.x + dx * r, sz = L.z + dz * r;
+  webPoses.stops.lake_shore = makePose('lake_shore', sx, sz, yawToward(sx, sz, 25, 95), -0.14);
+}
+// Stream close: south bank of the carved lower river channel looking upstream along the flowing water.
+if (streamPts.length > 500) {
+  const si = 491;
+  const [px, pz] = streamPts[si], [qx, qz] = streamPts[Math.min(streamPts.length - 1, si + 4)];
+  const tx = qx - px, tz = qz - pz, tl = Math.hypot(tx, tz) || 1;
+  const sx = px - tz / tl * 5.2, sz = pz + tx / tl * 5.2;
+  const [lx, lz] = streamPts[si - 16];
+  const eyeY = sampleGrid(near, nRes, meta.near.size, sx, sz) + eyeH;
+  const tgtY = sampleGrid(near, nRes, meta.near.size, lx, lz) + 0.4;
+  const pitch = Math.atan2(tgtY - eyeY, Math.hypot(lx - sx, lz - sz)) - 0.14;
+  webPoses.stops.stream = makePose('stream', sx, sz, yawToward(sx, sz, lx, lz), pitch);
+}
+// Waterfall: south-west bank beside the outflow stream (matching shots.json fallsStream) framing
+// the outflow stream, turquoise plunge pool with foam rings, splash crown, and full braided cascade.
+if (waterfall) {
+  const fk = Math.min(streamPts.length - 2, waterfall.footIdx + 16);
+  const [fpx, fpz] = streamPts[fk], [fqx, fqz] = streamPts[fk + 1];
+  const ftx = fqx - fpx, ftz = fqz - fpz, ftl = Math.hypot(ftx, ftz) || 1;
+  const wx = fpx - ftz / ftl * 5.5, wz = fpz + ftx / ftl * 5.5;
+  const eyeY = sampleGrid(near, nRes, meta.near.size, wx, wz) + eyeH;
+  const [pcx, pcy, pcz] = waterfall.poolCenter;
+  const topX = waterfall.bx + waterfall.ux * waterfall.dLip;
+  const topZ = waterfall.bz + waterfall.uz * waterfall.dLip;
+  const tgx = pcx * 0.65 + topX * 0.35;
+  const tgz = pcz * 0.65 + topZ * 0.35;
+  const tgy = (pcy - 1.4) * 0.68 + (waterfall.yTop - 3.0) * 0.32;
+  const pitch = Math.atan2(tgy - eyeY, Math.hypot(tgx - wx, tgz - wz));
+  webPoses.stops.waterfall = makePose('waterfall', wx, wz, yawToward(wx, wz, tgx, tgz), pitch);
+}
 
 // ---------- write ----------
 fs.rmSync(OUT, { recursive: true, force: true });
@@ -263,7 +404,8 @@ const webMeta = {
     rule: 'x = code / 16 + origin, z likewise; s = code / 8; blocks within s * 0.03 + walker radius (non-bush canonical trees, every tier)',
   },
   game,
-  poses,
+  water,
+  poses: webPoses,
   walk,
   sizes,
 };
