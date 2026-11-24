@@ -14,6 +14,8 @@ const WALK_PITCH := -0.04
 const LOOK_AHEAD := 8.0
 
 var world: RefCounted
+# The game (systems/session.gd) owns the camera; the bench takes it back while it runs.
+var external := false
 var mode_i := 0
 var t := 0.0
 var walk_pts := PackedVector2Array()
@@ -95,6 +97,8 @@ func _process(delta: float) -> void:
 
 
 func _tick(delta: float) -> void:
+	if external:
+		return
 	if mode() == "walk":
 		t += delta
 		_walk_to(fmod(t * WALK_SPEED, walk_dist[walk_dist.size() - 1] - LOOK_AHEAD))

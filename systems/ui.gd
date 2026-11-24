@@ -23,6 +23,10 @@ var terrain_sys: Node
 var trees_sys: Node
 var post: Node
 var build_id := ""
+# In the game the readout and levers hide behind G / the pause sheet's Perf button (?debug shows
+# them at load); bench and pose pages show them as before.
+var game := false
+var dev_on := true
 
 var dist_i := 0
 var dens_i := 0
@@ -43,9 +47,13 @@ func setup(nodes: Dictionary) -> void:
 	trees_sys = nodes.trees
 	post = nodes.post
 	build_id = nodes.build
+	game = nodes.get("game", false)
+	dev_on = not game or Flags.has("debug")
 
 
 func _ready() -> void:
+	# Above the game's HUD and pause sheet, so the pause sheet's Perf button can open it.
+	layer = 10
 	label = _label(11, Color.WHITE)
 	label.position = Vector2(8, 8)
 	add_child(label)
@@ -78,6 +86,9 @@ func _ready() -> void:
 	bench_sys.finished.connect(_show_results)
 
 	_apply_start_flags()
+	if game:
+		btn.pose.visible = false
+	_show_dev()
 	_refresh()
 	# Look-check screenshots hide the overlay: ?noui on Web, `-- --no-ui` on desktop.
 	visible = not (Flags.has("noui") or Flags.has("no-ui"))
@@ -136,6 +147,18 @@ func _on_button(key: String) -> void:
 		"bench":
 			_start_bench()
 	_refresh()
+
+
+func toggle_dev() -> void:
+	dev_on = not dev_on
+	_show_dev()
+
+
+func _show_dev() -> void:
+	label.visible = dev_on
+	grid.visible = dev_on and not bench_sys.running
+	if not dev_on:
+		panel.visible = false
 
 
 func _start_bench() -> void:
@@ -264,8 +287,9 @@ func _show_results(r: Dictionary) -> void:
 		r.target, r.frame_cap, r.renderer, r.engine, r.build]
 	panel_box.add_child(_text(info, 11, Color(0.85, 0.87, 0.9)))
 	panel_box.add_child(_text(_short_ua(str(r.ua)), 11, Color(0.6, 0.63, 0.68)))
+	dev_on = true
 	panel.visible = true
-	grid.visible = true
+	_show_dev()
 	_refresh()
 
 
@@ -339,6 +363,8 @@ func _process(delta: float) -> void:
 
 func _tick(_delta: float) -> void:
 	progress.text = ("Bench  " + bench_sys.progress) if bench_sys.running else ""
+	if not dev_on:
+		return
 	label.text = "%d fps  %d x %d of %d x %d  post %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [
 		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off",
 		bench_sys.last_draws, bench_sys.last_prims / 1.0e6, terrain_sys.last_tris / 1.0e6, trees_sys.last_tris / 1.0e6, grass_sys.last_tris / 1.0e6]

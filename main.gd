@@ -7,10 +7,12 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "slice5-4"
+const BUILD := "w1-1"
 
 
 func _ready() -> void:
+	# One UI unit = one CSS pixel, so the game's interface uses Stillwater's CSS sizes on any screen.
+	get_window().content_scale_factor = Flags.device_pixel_ratio()
 	var t0 := Time.get_ticks_msec()
 	var world := CompactWorld.new()
 	if not world.load_dir("res://data/valley/web"):
@@ -48,21 +50,28 @@ func _ready() -> void:
 	cam.set_script(load("res://systems/walk_camera.gd"))
 	cam.setup(world)
 	scene.add_child(cam)
+	# The game is the default page; bench, pose and shot pages keep the fixed camera poses.
+	var game := not (Flags.has("bench") or Flags.has("pose") or Flags.has("shot") or Flags.has("bench-shot"))
 	var ui := CanvasLayer.new()
 	var bench_sys := Node.new()
 	bench_sys.name = "bench"
 	bench_sys.set_script(load("res://systems/bench.gd"))
 	add_child(bench_sys)
-	cam.mode_changed.connect(bench_sys.restart)
-	bench_sys.restart(cam.mode())
+	if not game:
+		cam.mode_changed.connect(bench_sys.restart)
+		bench_sys.restart(cam.mode())
+	else:
+		bench_sys.reported = true
 	ui.name = "ui"
 	ui.set_script(load("res://systems/ui.gd"))
-	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "post": post, "build": BUILD})
+	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "post": post, "build": BUILD, "game": game})
 	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
 	bench_sys.profiled = {"terrain": terrain_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
 	add_child(ui)
-	print("BUILD %s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs renderer=%s" % [
-		BUILD, t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
+	if game:
+		_add_game(world, scene, cam, bench_sys, ui, env_sys)
+	print("BUILD %s game=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs renderer=%s" % [
+		BUILD, "on" if game else "off", t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
 		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
 		clouds_sys.puffs, Flags.gpu_name()])
 	var bench_shot := Flags.value("bench-shot")
@@ -71,6 +80,40 @@ func _ready() -> void:
 	var shot := Flags.value("shot")
 	if shot != "":
 		_shot(shot)
+
+
+# Input, walker, HUD and session. Created only on the game page, so ?bench and ?pose run exactly
+# the systems they ran before.
+func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: Node, ui: CanvasLayer, env_sys: Node) -> void:
+	var input := Node.new()
+	input.name = "input"
+	input.set_script(load("res://systems/game_input.gd"))
+	add_child(input)
+	var player := Node.new()
+	player.name = "player"
+	player.set_script(load("res://systems/player.gd"))
+	player.setup(world, input, cam)
+	scene.add_child(player)
+	var hud := CanvasLayer.new()
+	hud.name = "hud"
+	hud.set_script(load("res://systems/hud.gd"))
+	hud.visible = not (Flags.has("noui") or Flags.has("no-ui"))
+	add_child(hud)
+	var session := Node.new()
+	session.name = "session"
+	session.set_script(load("res://systems/session.gd"))
+	session.setup({"world": world, "input": input, "player": player, "hud": hud, "cam": cam, "walk_cam": cam,
+		"bench": bench_sys, "dev_toggle": ui.toggle_dev, "hours": env_sys.HOURS})
+	add_child(session)
+	bench_sys.profiled.merge({"player": player, "session": session})
+	if Flags.has("walklog"):
+		var log := Node.new()
+		log.name = "walk_log"
+		log.set_script(load("res://systems/walk_log.gd"))
+		log.systems = bench_sys.profiled
+		log.session = session
+		log.player = player
+		add_child(log)
 
 
 # Look checks: `godot --path . -- --pose=forest --no-ui --shot=out.png` saves one frame and quits.
