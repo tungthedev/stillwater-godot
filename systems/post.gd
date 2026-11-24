@@ -39,6 +39,7 @@ var comp_layer: CanvasLayer
 var screen := Vector2i(16, 16)
 var internal := Vector2i(16, 16)
 var scale := TIER_SCALE
+var scale_mult := 1.0
 var fx := true
 
 
@@ -131,7 +132,7 @@ static func internal_size(w: int, h: int, s: float) -> Vector2i:
 func resize() -> void:
 	screen = DisplayServer.window_get_size()
 	var m: Dictionary = RES_MODES[res_i]
-	scale = cap_scale(screen.x, screen.y, float(m.scale), int(m.cap))
+	scale = cap_scale(screen.x, screen.y, float(m.scale), int(m.cap)) * scale_mult
 	internal = internal_size(screen.x, screen.y, scale)
 	scene_vp.size = internal
 	var bw := internal.x >> 1
@@ -169,6 +170,18 @@ func set_res_mode(label: String) -> void:
 
 func res_label() -> String:
 	return RES_MODES[res_i].label
+
+
+func set_scale_mult(mult: float) -> void:
+	if is_equal_approx(mult, scale_mult):
+		return
+	scale_mult = mult
+	resize()
+
+
+func set_painterly(p: bool) -> void:
+	if comp_mat != null:
+		comp_mat.set_shader_parameter("painterly", 1.0 if p else 0.0)
 
 
 func set_on(v: bool) -> void:

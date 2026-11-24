@@ -22,6 +22,8 @@ const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
 
 var world: RefCounted
 var mat: ShaderMaterial
+var flat_mat: ShaderMaterial
+var flat_on := false
 var draw: SwapMultiMesh
 var buf := PackedFloat32Array()
 var tris_per_node := 0
@@ -78,6 +80,35 @@ func _ready() -> void:
 
 func set_skirt(on: bool) -> void:
 	mat.set_shader_parameter("skirt_on", 1.0 if on else 0.0)
+	if flat_mat != null:
+		flat_mat.set_shader_parameter("skirt_on", 1.0 if on else 0.0)
+
+
+# Sweep helper: swap terrain fragments to a flat colour while keeping identical CDLOD vertices and depth.
+func set_flat(on: bool) -> void:
+	if on == flat_on:
+		return
+	flat_on = on
+	if on and flat_mat == null:
+		flat_mat = ShaderMaterial.new()
+		flat_mat.shader = load("res://shaders/terrain_flat.gdshader")
+		flat_mat.set_shader_parameter("near_tex", world.texture("near"))
+		flat_mat.set_shader_parameter("far_tex", world.texture("far"))
+		flat_mat.set_shader_parameter("biome_tex", world.texture("biome"))
+		flat_mat.set_shader_parameter("noise_tex", world.noise_tex)
+		flat_mat.set_shader_parameter("near_size", world.near_size)
+		flat_mat.set_shader_parameter("near_min", world.near_min)
+		flat_mat.set_shader_parameter("near_step", world.near_step)
+		flat_mat.set_shader_parameter("far_size", world.far_size)
+		flat_mat.set_shader_parameter("far_min", world.far_min)
+		flat_mat.set_shader_parameter("far_step", world.far_step)
+		flat_mat.set_shader_parameter("grid_n", float(N))
+		flat_mat.set_shader_parameter("lod_k", LOD_K)
+		flat_mat.set_shader_parameter("skirt_on", mat.get_shader_parameter("skirt_on"))
+		flat_mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
+		flat_mat.set_shader_parameter("cam_dy", _dy)
+	for mmi in draw.mmis:
+		mmi.material_override = flat_mat if on else null
 
 
 # Grid of (N + 1)^2 vertices in [0, 1]^2 with alternating diagonals, plus a ring of skirt
@@ -162,6 +193,9 @@ func select(cam: Camera3D) -> int:
 	push_us = Time.get_ticks_usec() - tp
 	mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 	mat.set_shader_parameter("cam_dy", _dy)
+	if flat_on and flat_mat != null:
+		flat_mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
+		flat_mat.set_shader_parameter("cam_dy", _dy)
 	last_nodes = _count
 	last_tris = _count * tris_per_node
 	return _count

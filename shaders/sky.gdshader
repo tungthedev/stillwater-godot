@@ -15,6 +15,7 @@ uniform vec3 cam_fwd;
 uniform float tan_half_fov;
 uniform vec2 cloud_offset;
 uniform vec2 wind_dir;
+uniform float cirrus_on = 1.0;
 
 // sky.js cirrus(): a wind-aligned noise layer at 12 km, daytime colour only.
 vec4 cirrus(vec3 dir, vec3 cam) {
@@ -49,8 +50,10 @@ void sky() {
 		col += sun_col * disc * limb * 24.0;
 	}
 	col += sun_col * pow(max(mu, 0.0), 140.0) * 0.78 + sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
-	vec4 ci = cirrus(dir, POSITION);
-	col = mix(col, ci.rgb, ci.a);
+	if (cirrus_on > 0.5) {
+		vec4 ci = cirrus(dir, POSITION);
+		col = mix(col, ci.rgb, ci.a);
+	}
 	col = clamp(mix(col, vec3(0.0), isnan(col)), vec3(0.0), vec3(200.0));
 	float fz = max(dot(dir, cam_fwd), 1e-3);
 	float aspect = view_size.x / max(view_size.y, 1.0);
