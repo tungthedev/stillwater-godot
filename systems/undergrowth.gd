@@ -514,82 +514,90 @@ func _build_logs_and_stumps() -> void:
 
 
 # Unit mossy nurse log along local X in [-0.5, +0.5], unit radius 1.0:
-# tapered weathered trunk + velvet emerald moss blanket + cut end-grain caps + 3 shelf polypores +
-# dark humus bed grounding the underside solidly into sloping forest floors.
+# true 10-sided tapered round cylinder with curved top crest (vertex at PI/2 so top never reads
+# flat), slightly uneven angled cut ends with concentric wood rings, subtle organic bend, and
+# 3 small shelf polypore brackets. Moss is painted onto the curved upper arc in shader so it
+# follows the round profile with zero overhanging slab geometry.
 func _build_log_mesh() -> ArrayMesh:
 	var mb := _WoodMB.new()
-	var bark := Color(0.28, 0.18, 0.11)
-	var end_wood := Color(0.66, 0.50, 0.32)
-	var moss := Color(0.12, 0.34, 0.08)
-	var shelf := Color(0.84, 0.66, 0.38)
+	var bark := Color(0.28, 0.17, 0.10)
+	var end_wood := Color(0.76, 0.58, 0.36)
+	var shelf := Color(0.86, 0.68, 0.42)
 
-	# Tapered round horizontal trunk (10 sides with smooth radial normals, upper arch rising to
-	# +1.30*r and underside sunk to -1.15*r so sloping forest ground never shows a gap under ends).
 	const SEGS := 10
+	# [x, radius, y_center, z_center, end_skew_sin, end_skew_cos]
+	# y_center ~0.55 exposes ~260 deg of the circular circumference so the lower belly visibly curves
+	# inward into the ground contact shadow while keeping the underside ~6-12 cm embedded on slopes.
 	var rings := [
-		[-0.50, 1.12, 0.22],
-		[ 0.00, 1.06, 0.28],
-		[ 0.50, 0.96, 0.22],
+		[-0.50, 1.08, 0.52,  0.02,  0.042,  0.024],
+		[-0.44, 1.16, 0.54,  0.02,  0.026,  0.014],
+		[-0.14, 1.06, 0.58,  0.04,  0.000,  0.000],
+		[ 0.16, 0.98, 0.56, -0.03,  0.000,  0.000],
+		[ 0.44, 0.92, 0.53,  0.01, -0.028,  0.016],
+		[ 0.50, 0.85, 0.51,  0.01, -0.045,  0.024],
 	]
+	var ring_pts: Array = []
+	var ring_nrm: Array = []
+	var ring_h: Array = []
+	var ring_endt: Array = []
+	for ri in rings.size():
+		var x0: float = rings[ri][0]
+		var r0: float = rings[ri][1]
+		var yc: float = rings[ri][2]
+		var zc: float = rings[ri][3]
+		var sks: float = rings[ri][4]
+		var skc: float = rings[ri][5]
+		var pts: Array[Vector3] = []
+		var nrms: Array[Vector3] = []
+		var hs: Array[float] = []
+		for s in SEGS:
+			# Start at PI/2 so s=0 sits directly on the rounded top crest (no flat horizontal top facet).
+			var a := PI * 0.5 + float(s) / float(SEGS) * TAU
+			var ca := cos(a)
+			var sa := sin(a)
+			var bump := 1.0 + 0.04 * sin(a * 3.0 + float(ri) * 1.4)
+			var px := x0 + sks * sa + skc * ca
+			var py := yc + sa * r0 * bump
+			var pz := zc + ca * r0 * bump
+			pts.append(Vector3(px, py, pz))
+			nrms.append(Vector3(0.0, sa, ca).normalized())
+			hs.append(clampf(sa * 0.5 + 0.5, 0.0, 1.0))
+		ring_pts.append(pts)
+		ring_nrm.append(nrms)
+		ring_h.append(hs)
+		ring_endt.append(absf(x0) * 2.0)
+
 	for ri in rings.size() - 1:
-		var x0: float = rings[ri][0];     var r0: float = rings[ri][1];     var y0: float = rings[ri][2]
-		var x1: float = rings[ri + 1][0]; var r1: float = rings[ri + 1][1]; var y1: float = rings[ri + 1][2]
+		var pA: Array = ring_pts[ri];     var pB: Array = ring_pts[ri + 1]
+		var nA: Array = ring_nrm[ri];     var nB: Array = ring_nrm[ri + 1]
+		var hA: Array = ring_h[ri];       var hB: Array = ring_h[ri + 1]
+		var etA: float = ring_endt[ri];   var etB: float = ring_endt[ri + 1]
+		var et_mid := 0.5 * (etA + etB)
 		for s in SEGS:
-			var a0 := float(s) / float(SEGS) * TAU
-			var a1 := float(s + 1) / float(SEGS) * TAU
-			var c0 := cos(a0); var s0 := sin(a0)
-			var c1 := cos(a1); var s1 := sin(a1)
-			var sy0 := s0 * (1.30 if s0 < 0.0 else 1.08)
-			var sy1 := s1 * (1.30 if s1 < 0.0 else 1.08)
-			var p00 := Vector3(x0, y0 + sy0 * r0, c0 * r0)
-			var p01 := Vector3(x0, y0 + sy1 * r0, c1 * r0)
-			var p11 := Vector3(x1, y1 + sy1 * r1, c1 * r1)
-			var p10 := Vector3(x1, y1 + sy0 * r1, c0 * r1)
-			var n0 := Vector3(0.0, s0, c0).normalized()
-			var n1 := Vector3(0.0, s1, c1).normalized()
-			var h0 := clampf(s0 * 0.5 + 0.5, 0.0, 1.0)
-			var h1 := clampf(s1 * 0.5 + 0.5, 0.0, 1.0)
-			mb.quad_smooth(p00, p10, p11, p01, n0, n0, n1, n1, bark, 0.96, Vector2(0.0, h0), Vector2(0.0, h0), Vector2(0.0, h1), Vector2(0.0, h1))
+			var sn := (s + 1) % SEGS
+			mb.quad_smooth(
+				pA[s], pB[s], pB[sn], pA[sn],
+				nA[s], nB[s], nB[sn], nA[sn],
+				bark, et_mid,
+				Vector2(0.0, hA[s]), Vector2(0.0, hB[s]), Vector2(0.0, hB[sn]), Vector2(0.0, hA[sn])
+			)
 
-	# Cut end-grain caps at -0.5 and +0.5.
+	# Uneven circular cut end-grain caps (UV.x = 0.35, UV.y = radial 0..1 for painted wood rings).
 	for end_i in 2:
-		var ex: float = -0.50 if end_i == 0 else 0.50
-		var er: float = 1.12 if end_i == 0 else 0.96
-		var en := Vector3(-1.0, 0.0, 0.0) if end_i == 0 else Vector3(1.0, 0.0, 0.0)
-		var ec := Vector3(ex, 0.22, 0.0)
+		var ri := 0 if end_i == 0 else rings.size() - 1
+		var ex: float = rings[ri][0]
+		var yc: float = rings[ri][2]
+		var zc: float = rings[ri][3]
+		var pts: Array = ring_pts[ri]
+		var en := Vector3(-1.0, 0.08, 0.0).normalized() if end_i == 0 else Vector3(1.0, 0.10, 0.0).normalized()
+		# Slightly recessed heartwood center breaks flat-slab look on the cut face.
+		var ec := Vector3(ex + (0.015 if end_i == 0 else -0.015), yc, zc)
 		for s in SEGS:
-			var a0 := float(s) / float(SEGS) * TAU
-			var a1 := float(s + 1) / float(SEGS) * TAU
-			var s0 := sin(a0); var s1 := sin(a1)
-			var v0 := Vector3(ex, 0.22 + s0 * (1.30 if s0 < 0.0 else 1.08) * er, cos(a0) * er)
-			var v1 := Vector3(ex, 0.22 + s1 * (1.30 if s1 < 0.0 else 1.08) * er, cos(a1) * er)
-			mb.tri(ec, v0, v1, en, end_wood, 1.0, Vector2(0.35, 0.55), Vector2(0.35, 0.55), Vector2(0.35, 0.55))
+			var sn := (s + 1) % SEGS
+			mb.tri(ec, pts[s], pts[sn], en, end_wood, 1.0, Vector2(0.35, 0.0), Vector2(0.35, 1.0), Vector2(0.35, 1.0))
 
-	# Plush sculpted velvet moss blanket draping organically over the upper arch.
-	const MSEGS := 6
-	var moss_rings := [
-		[-0.38, 1.18, 0.26],
-		[-0.12, 1.24, 0.34],
-		[ 0.15, 1.20, 0.32],
-		[ 0.36, 1.08, 0.24],
-	]
-	for ri in moss_rings.size() - 1:
-		var x0: float = moss_rings[ri][0];     var r0: float = moss_rings[ri][1];     var y0: float = moss_rings[ri][2]
-		var x1: float = moss_rings[ri + 1][0]; var r1: float = moss_rings[ri + 1][1]; var y1: float = moss_rings[ri + 1][2]
-		for s in MSEGS:
-			var a0 := lerpf(0.28, PI - 0.28, float(s) / float(MSEGS))
-			var a1 := lerpf(0.28, PI - 0.28, float(s + 1) / float(MSEGS))
-			var p00 := Vector3(x0, y0 + sin(a0) * r0, cos(a0) * r0)
-			var p01 := Vector3(x0, y0 + sin(a1) * r0, cos(a1) * r0)
-			var p11 := Vector3(x1, y1 + sin(a1) * r1, cos(a1) * r1)
-			var p10 := Vector3(x1, y1 + sin(a0) * r1, cos(a0) * r1)
-			var n0 := Vector3(0.0, sin(a0), cos(a0)).normalized()
-			var n1 := Vector3(0.0, sin(a1), cos(a1)).normalized()
-			mb.quad_smooth(p00, p10, p11, p01, n0, n0, n1, n1, moss, 1.0, Vector2(0.85, 0.85), Vector2(0.85, 0.85), Vector2(0.85, 0.85), Vector2(0.85, 0.85))
-
-	# 3 compact semicircular fan polypore fungi sprouting on the sunlit bark flank (18 tris total;
-	# fw kept narrow in X because X is scaled by log length ~4 m).
-	for sp in [[-0.22, 0.42, 0.96, 0.024, 0.36], [0.05, 0.56, 0.92, 0.030, 0.44], [0.24, 0.36, 0.94, 0.022, 0.34]]:
+	# 3 compact semicircular shelf polypore brackets hugging the sunlit curved bark flank.
+	for sp in [[-0.20, 0.72, 0.92, 0.022, 0.28], [0.06, 0.80, 0.88, 0.026, 0.34], [0.24, 0.64, 0.84, 0.020, 0.26]]:
 		var fx: float = sp[0]; var fy: float = sp[1]; var fz: float = sp[2]
 		var fw: float = sp[3]; var fout: float = sp[4]
 		var p_root := Vector3(fx, fy, fz)
@@ -600,51 +608,94 @@ func _build_log_mesh() -> ArrayMesh:
 			Vector3(fx + fw, fy + 0.02, fz + fout * 0.45),
 		]
 		for k in 3:
-			mb.tri(p_root, fan[k], fan[k + 1], Vector3.UP, shelf, 1.0, Vector2(0.35, 0.72), Vector2(0.35, 0.72), Vector2(0.35, 0.72))
-			mb.tri(p_root + Vector3(0.0, -0.06, 0.0), fan[k + 1], fan[k], Vector3.DOWN, shelf * 0.78, 0.85, Vector2(0.35, 0.65), Vector2(0.35, 0.65), Vector2(0.35, 0.65))
+			mb.tri(p_root, fan[k], fan[k + 1], Vector3.UP, shelf, 0.5, Vector2(0.55, 0.72), Vector2(0.55, 0.72), Vector2(0.55, 0.72))
+			mb.tri(p_root + Vector3(0.0, -0.05, 0.0), fan[k + 1], fan[k], Vector3.DOWN, shelf * 0.78, 0.5, Vector2(0.55, 0.65), Vector2(0.55, 0.65), Vector2(0.55, 0.65))
 
 	_log_tris = mb.tri_count
 	return mb.finish()
 
 
 # Unit mossy woodland stump (radius 1.0, height 1.0):
-# flared tapered trunk + pale cut top + velvet moss dome + 4 splayed grounding root flares.
+# smooth 10-sided organically fluted round trunk with flared grounding roots, lighter angled cut
+# wood top with painted growth rings, and one low rounded moss shoulder cushion (zero boxy cubes).
 func _build_stump_mesh() -> ArrayMesh:
 	var mb := _WoodMB.new()
-	var bark := Color(0.32, 0.22, 0.14)
-	var top_wood := Color(0.70, 0.56, 0.36)
+	var bark := Color(0.30, 0.19, 0.11)
+	var top_wood := Color(0.78, 0.60, 0.38)
 	var moss := Color(0.14, 0.38, 0.09)
 
-	const SEGS := 8
+	const SEGS := 10
+	# [y, base_radius, flute_amp, y_tilt_cos, y_tilt_sin]
+	var s_rings := [
+		[-0.24, 1.34, 0.16,  0.00,  0.00],
+		[ 0.38, 0.98, 0.06,  0.00,  0.00],
+		[ 0.98, 0.88, 0.03,  0.07, -0.04],
+	]
+	var s_pts: Array = []
+	var s_nrm: Array = []
+	var s_h: Array = []
+	for ri in s_rings.size():
+		var yr: float = s_rings[ri][0]
+		var rr: float = s_rings[ri][1]
+		var fa: float = s_rings[ri][2]
+		var tc: float = s_rings[ri][3]
+		var ts: float = s_rings[ri][4]
+		var pts: Array[Vector3] = []
+		var nrms: Array[Vector3] = []
+		var hs: Array[float] = []
+		for s in SEGS:
+			var a := float(s) / float(SEGS) * TAU
+			var ca := cos(a); var sa := sin(a)
+			var r := rr * (1.0 + fa * cos(a * 4.0 + 0.45))
+			var py := yr + tc * ca + ts * sa
+			pts.append(Vector3(ca * r, py, sa * r))
+			nrms.append(Vector3(ca, 0.18 if ri == 0 else 0.08, sa).normalized())
+			hs.append(clampf((yr + 0.24) / 1.22, 0.0, 1.0))
+		s_pts.append(pts)
+		s_nrm.append(nrms)
+		s_h.append(hs)
+
+	for ri in s_rings.size() - 1:
+		var pA: Array = s_pts[ri]; var pB: Array = s_pts[ri + 1]
+		var nA: Array = s_nrm[ri]; var nB: Array = s_nrm[ri + 1]
+		var hA: Array = s_h[ri];   var hB: Array = s_h[ri + 1]
+		for s in SEGS:
+			var sn := (s + 1) % SEGS
+			mb.quad_smooth(
+				pA[s], pA[sn], pB[sn], pB[s],
+				nA[s], nA[sn], nB[sn], nB[s],
+				bark, 0.25,
+				Vector2(0.0, hA[s]), Vector2(0.0, hA[sn]), Vector2(0.0, hB[sn]), Vector2(0.0, hB[s])
+			)
+
+	# Lighter angled cut wood top with concentric growth rings (UV.x = 0.35, UV.y = 0..1 radial).
+	var top_pts: Array = s_pts[s_rings.size() - 1]
+	var top_c := Vector3(0.0, 0.99, 0.0)
+	var top_n := Vector3(-0.07, 1.0, 0.04).normalized()
 	for s in SEGS:
-		var a0 := float(s) / float(SEGS) * TAU
-		var a1 := float(s + 1) / float(SEGS) * TAU
-		var c0 := cos(a0); var s0 := sin(a0)
-		var c1 := cos(a1); var s1 := sin(a1)
-		var b0 := Vector3(c0 * 1.26, -0.25, s0 * 1.26)
-		var b1 := Vector3(c1 * 1.26, -0.25, s1 * 1.26)
-		var t0 := Vector3(c0 * 0.86, 1.0, s0 * 0.86)
-		var t1 := Vector3(c1 * 0.86, 1.0, s1 * 0.86)
-		var n := Vector3(c0 + c1, 0.22, s0 + s1).normalized()
-		mb.quad(b0, b1, t1, t0, n, bark, 0.95, Vector2(0.0, 0.0), Vector2(0.0, 0.0), Vector2(0.0, 1.0), Vector2(0.0, 1.0))
-		mb.tri(Vector3(0.0, 1.0, 0.0), t0, t1, Vector3.UP, top_wood, 1.0, Vector2(0.35, 0.95), Vector2(0.35, 0.95), Vector2(0.35, 0.95))
+		var sn := (s + 1) % SEGS
+		mb.tri(top_c, top_pts[s], top_pts[sn], top_n, top_wood, 1.0, Vector2(0.35, 0.0), Vector2(0.35, 1.0), Vector2(0.35, 1.0))
 
-	# Asymmetrical moss cushion perched on one half of the cut top.
-	mb.box(Vector3(1.05, 0.26, 0.95), Vector3(0.24, 1.06, 0.10), moss, 1.0, 0.85, 0.95)
-	mb.box(Vector3(0.72, 0.20, 0.72), Vector3(-0.18, 1.02, -0.18), moss, 1.0, 0.85, 0.95)
-
-	# 4 grounding root buttresses radiating into the forest floor.
-	for r in 4:
-		var a := float(r) * (PI * 0.5) + 0.35
-		var d := Vector3(cos(a), 0.0, sin(a))
-		var sd := Vector3(-d.z, 0.0, d.x)
-		var p_in := d * 0.72 + Vector3(0.0, 0.42, 0.0)
-		var p_out := d * 1.65 + Vector3(0.0, -0.18, 0.0)
-		var rw := 0.24
-		var n_top := (Vector3.UP + d * 0.45).normalized()
-		mb.quad(p_in - sd * rw, p_in + sd * rw, p_out + sd * (rw * 0.7), p_out - sd * (rw * 0.7), n_top, bark, 0.86, Vector2(0.0, 0.38), Vector2(0.0, 0.38), Vector2(0.0, 0.02), Vector2(0.0, 0.02))
-		mb.quad(p_in + sd * rw, p_out + sd * (rw * 0.7), p_out + sd * (rw * 0.7) + Vector3(0.0, -0.30, 0.0), p_in + sd * rw + Vector3(0.0, -0.55, 0.0), sd, bark, 0.78, Vector2(0.0, 0.25), Vector2(0.0, 0.0), Vector2(0.0, 0.0), Vector2(0.0, 0.0))
-		mb.quad(p_out - sd * (rw * 0.7), p_in - sd * rw, p_in - sd * rw + Vector3(0.0, -0.55, 0.0), p_out - sd * (rw * 0.7) + Vector3(0.0, -0.30, 0.0), -sd, bark, 0.78, Vector2(0.0, 0.0), Vector2(0.0, 0.25), Vector2(0.0, 0.0), Vector2(0.0, 0.0))
+	# One low rounded domed moss cushion draped over ~35% of one shoulder (leaves cut wood rings visible).
+	const M_SEGS := 8
+	var mc := Vector3(0.34, 1.00, 0.14)
+	var mr_x := 0.50; var mr_z := 0.44; var mh := 0.16
+	var apex := mc + Vector3(0.0, mh, 0.0)
+	var mid_ring: Array[Vector3] = []
+	var base_ring: Array[Vector3] = []
+	var mid_n: Array[Vector3] = []
+	var base_n: Array[Vector3] = []
+	for s in M_SEGS:
+		var a := float(s) / float(M_SEGS) * TAU
+		var ca := cos(a); var sa := sin(a)
+		base_ring.append(mc + Vector3(ca * mr_x, -0.06, sa * mr_z))
+		mid_ring.append(mc + Vector3(ca * mr_x * 0.68, mh * 0.62, sa * mr_z * 0.68))
+		base_n.append(Vector3(ca * 0.72, 0.68, sa * 0.72).normalized())
+		mid_n.append(Vector3(ca * 0.42, 0.90, sa * 0.42).normalized())
+	for s in M_SEGS:
+		var sn := (s + 1) % M_SEGS
+		mb.quad_smooth(base_ring[s], base_ring[sn], mid_ring[sn], mid_ring[s], base_n[s], base_n[sn], mid_n[sn], mid_n[s], moss, 0.2, Vector2(0.85, 0.90), Vector2(0.85, 0.90), Vector2(0.85, 0.96), Vector2(0.85, 0.96))
+		mb.tri_smooth(apex, mid_ring[s], mid_ring[sn], Vector3.UP, mid_n[s], mid_n[sn], moss, 0.2, Vector2(0.85, 1.0), Vector2(0.85, 0.96), Vector2(0.85, 0.96))
 
 	_stump_tris = mb.tri_count
 	return mb.finish()
