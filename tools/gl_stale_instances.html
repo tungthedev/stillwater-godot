@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Stale instance data repro</title>
+<canvas id="c" width="256" height="64"></canvas>
+<script>
+// Plain WebGL2 repro of the browser bug behind the Godot walk's vanishing terrain and grass
+// (systems/swap_multimesh.gd). Each frame re-uploads an instance buffer, then draws from it the
+// way Godot's GLES3 renderer does: enable + point the instance attributes, draw, disable them.
+// The fragment shader turns green when an instance carries this frame's stamp, red otherwise.
+// Seen on ANGLE Vulkan (Intel UHD 730): with the disable step the draw keeps the old data.
+//   ?nodisable   skip disableVertexAttribArray after the draw (data is fresh)
+//   ?alt         alternate two instance buffers (what swap_multimesh.gd does; data is fresh)
+// Result in window.__result after 1200 frames: { good, bad } over 40 samples.
+// Run: tools/gl_stale_instances.mjs.
+const q = new URLSearchParams(location.search);
+const DISABLE = !q.has('nodisable'), ALT = q.has('alt');
+const N = 1024;
+const gl = document.getElementById('c').getContext('webgl2', { preserveDrawingBuffer: true, antialias: false });
+const vs = `#version 300 es
+layout(location=0) in vec2 pos;
+layout(location=12) in vec4 r0; layout(location=13) in vec4 r1; layout(location=14) in vec4 r2;
+flat out float stamp;
+void main() {
+  stamp = r1.x;
+  gl_Position = vec4((r0.w + pos.x) / 128.0 - 1.0, pos.y * 2.0 - 1.0, 0.0, 1.0);
+}`;
+const fs = `#version 300 es
+precision highp float; uniform float cur; flat in float stamp; out vec4 o;
+void main() { o = stamp == cur ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1); }`;
+function compile(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prog); gl.useProgram(prog);
+const uCur = gl.getUniformLocation(prog, 'cur');
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 1, 3, 2]), gl.STATIC_DRAW);
+gl.bindVertexArray(null);
+const bufs = [gl.createBuffer(), gl.createBuffer()];
+for (const b of bufs) { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, N * 48, gl.STATIC_DRAW); }
+const data = new Float32Array(N * 12);
+let frame = 0, good = 0, bad = 0;
+function tick() {
+  frame++;
+  const count = 120 - (frame % 7);
+  for (let i = 0; i < count; i++) { data[i * 12 + 3] = i * 2; data[i * 12 + 4] = frame; }
+  const inst = ALT ? bufs[frame & 1] : bufs[0];
+  gl.bindBuffer(gl.ARRAY_BUFFER, inst);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.uniform1f(uCur, frame);
+  gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, inst);
+  for (let a = 0; a < 3; a++) {
+    gl.enableVertexAttribArray(12 + a);
+    gl.vertexAttribPointer(12 + a, 4, gl.FLOAT, false, 48, a * 16);
+    gl.vertexAttribDivisor(12 + a, 1);
+  }
+  gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, count);
+  if (DISABLE) for (let a = 12; a < 15; a++) gl.disableVertexAttribArray(a);
+  gl.bindVertexArray(null);
+  if (frame % 60 === 0 || frame % 60 === 31) {
+    const px = new Uint8Array(4);
+    gl.readPixels(2, 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    if (px[1] > 128) good++; else bad++;
+  }
+  if (frame < 1200) requestAnimationFrame(tick);
+  else window.__result = { query: location.search, good, bad };
+}
+requestAnimationFrame(tick);
+</script>
