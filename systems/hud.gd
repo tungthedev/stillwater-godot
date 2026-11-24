@@ -70,9 +70,10 @@ var _breathe := 0.0
 var _hud_on := true
 var _hud_live := false
 var _btn_key := []
-var blockers: Array[Control] = []
+var blockers: Array = []
 var _touch_btns := {}
 var _touch_fire_ms := {}
+var _stick_shown := false
 
 
 func _ready() -> void:
@@ -125,10 +126,11 @@ func _input(e: InputEvent) -> void:
 
 
 func _is_blocked(pos: Vector2) -> bool:
-	for c in blockers:
+	for item in blockers:
+		var c: Control = item
 		if c == null or not c.is_visible_in_tree():
 			continue
-		var p := c.get_parent()
+		var p: Node = c.get_parent()
 		if p is CanvasLayer and not (p as CanvasLayer).visible:
 			continue
 		if c.get_global_rect().has_point(pos):
@@ -510,10 +512,13 @@ func _tbtn_state(b: Button, on: bool, hint: bool) -> void:
 
 func set_stick(state: Dictionary) -> void:
 	if not state.active:
+		_stick_shown = false
 		_fade(stick, 0.0, 0.14)
 		knob.position = (stick.size - knob.size) * 0.5
 		return
-	if stick.modulate.a < 1.0 and not (_tweens.has(stick) and _tweens[stick].is_running()):
+	# Re-entering while a fade-out tween is still running must kill that tween and fade back in.
+	if not _stick_shown:
+		_stick_shown = true
 		_fade(stick, 1.0, 0.14)
 	stick.position = state.origin - stick.size * 0.5
 	knob.position = (stick.size - knob.size) * 0.5 + state.offset

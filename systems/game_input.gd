@@ -57,6 +57,7 @@ var _look_id := -1
 var _look_last := Vector2.ZERO
 var _last_touch_ms := -100000
 var _landscape := false
+var _js_clear_cb: Variant = null
 
 
 func _ready() -> void:
@@ -64,9 +65,60 @@ func _ready() -> void:
 		touch = bool(JavaScriptBridge.eval("(() => { try { if (matchMedia('(pointer: coarse)').matches) return true; } catch (e) {} return (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window; })()"))
 		ios = bool(JavaScriptBridge.eval("/iPad|iPhone|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)"))
 		touch = touch or ios
+		_install_web_touch_hooks()
 	var vs := get_viewport().get_visible_rect().size
 	_landscape = vs.x > vs.y
 	get_tree().root.size_changed.connect(_on_resize)
+
+
+# Guard against lost touchend on iOS Safari (system gestures, edge/home-bar swipes, hardware
+# screenshots, app switches): clear touches on touchcancel, visibilitychange/pagehide/blur, and
+# whenever the DOM reports zero fingers remaining on the glass after Godot processes touchend.
+func _install_web_touch_hooks() -> void:
+	_js_clear_cb = JavaScriptBridge.create_callback(_on_js_clear)
+	var win := JavaScriptBridge.get_interface("window")
+	if win == null:
+		return
+	win.__swOnTouchClear = _js_clear_cb
+	JavaScriptBridge.eval("""(() => {
+		window.__swTouchCount = 0;
+		if (window.__swTouchHooked) return;
+		window.__swTouchHooked = true;
+		const fire = (why) => { if (window.__swOnTouchClear) window.__swOnTouchClear(why); };
+		const track = (e) => { window.__swTouchCount = e.touches ? e.touches.length : 0; };
+		window.addEventListener('touchstart', track, { passive: true, capture: true });
+		window.addEventListener('touchmove', track, { passive: true, capture: true });
+		window.addEventListener('touchend', (e) => {
+			track(e);
+			if (window.__swTouchCount === 0) fire('touchend0');
+		}, { passive: true });
+		window.addEventListener('touchcancel', (e) => {
+			track(e);
+			fire('touchcancel');
+		}, { passive: true, capture: true });
+		document.addEventListener('visibilitychange', () => {
+			if (document.hidden) { window.__swTouchCount = 0; fire('hidden'); }
+		});
+		window.addEventListener('pagehide', () => { window.__swTouchCount = 0; fire('pagehide'); });
+		window.addEventListener('blur', () => { window.__swTouchCount = 0; fire('blur'); });
+	})()""")
+
+
+func _on_js_clear(args: Array) -> void:
+	var why := str(args[0]) if not args.is_empty() else ""
+	if why == "touchend0":
+		call_deferred("_clear_if_no_touches")
+	else:
+		clear()
+
+
+func _clear_if_no_touches() -> void:
+	if (_move_id >= 0 or _look_id >= 0) and int(JavaScriptBridge.eval("window.__swTouchCount || 0")) == 0:
+		clear()
+
+
+func has_stick() -> bool:
+	return _move_id >= 0
 
 
 func _notification(what: int) -> void:
@@ -166,12 +218,14 @@ func _unhandled_input(e: InputEvent) -> void:
 			if not active or paused:
 				return
 			var half := get_viewport().get_visible_rect().size.x * 0.5
-			if e.position.x < half and _move_id < 0:
+			if e.position.x < half:
+				# Always reclaim the stick on a new left-half press so a lost release on iOS
+				# cannot lock out future stick input.
 				_move_id = e.index
 				_origin = e.position
 				_stick = Vector2.ZERO
 				stick_changed.emit({"active": true, "origin": _origin, "offset": Vector2.ZERO})
-			elif e.position.x >= half and _look_id < 0:
+			else:
 				_look_id = e.index
 				_look_last = e.position
 		else:

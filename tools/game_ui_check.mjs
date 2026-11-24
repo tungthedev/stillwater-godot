@@ -4,6 +4,8 @@
 //   pause_freeze  Trail on, pause for 5 s: the walker must not move while the sheet is up.
 //   hud_buttons   single-touch taps on Sit/Stand, Trail and Pause fire once each, and second-finger
 //                 taps on Sit, Stand, Trail and Pause work while the stick thumb stays held.
+//   stick_recovery lost touchEnd reclaim, touchCancel clear + fresh drag, quick release + re-touch
+//                 while the stick fade-out tween is running keeps the ring visible.
 //   two_thumbs    stick and look at once, then lift only the look thumb: distance and yaw both
 //                 change, and the stick keeps walking after the other thumb lifts.
 //   perf_bench    pause, Perf, flip the Grass lever, then Bench: the bench runs from the game page,
@@ -27,7 +29,7 @@ if (!process.env.BASE) throw new Error('set BASE to the server for build/web');
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
 const LAND = { width: 844, height: 390, deviceScaleFactor: 3, isMobile: true, hasTouch: true, isLandscape: true };
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1';
-const ALL = ['pause_freeze', 'hud_buttons', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas'];
+const ALL = ['pause_freeze', 'hud_buttons', 'stick_recovery', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas'];
 const CASES = argVal('--cases', ALL.join(',')).split(',');
 
 const { launchBrowser } = await import(pathToFileURL(path.join(SW, 'tools/chrome.mjs')).href);
@@ -207,6 +209,79 @@ try {
     await p.touch('touchEnd', [[2, pauseX, pauseY]]);
     u = await p.fresh();
     check(u.paused, 'second-finger tap Pause while holding stick paused');
+    await p.touch('touchEnd', []);
+    const errs = p.logs.filter((l) => /SCRIPT ERROR|PAGEERROR|ERROR:/.test(l));
+    check(errs.length === 0, `no errors (${errs.slice(0, 3).join(' | ')})`);
+    await p.page.close();
+  });
+
+  if (CASES.includes('stick_recovery')) await run('stick_recovery', async (check, r) => {
+    const p = await open(PHONE);
+    let u = await p.start();
+    const W = PHONE.width, H = PHONE.height;
+    const sx1 = W * 0.22, sy1 = H * 0.65;
+    const sx2 = W * 0.30, sy2 = H * 0.78;
+
+    // 1. Orphaned stick touch (no touchEnd): a fresh left-half touch reclaims the stick at its new origin.
+    await p.touch('touchStart', [[1, sx1, sy1]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[1, sx1, sy1 - i * 6]]); await sleep(16); }
+    await sleep(600);
+    u = await p.fresh();
+    check(u.stick_active && u.stick_alpha > 0.9, `initial stick active (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+    const dReclaim0 = u.distance;
+    // Start a fresh left-half touch (id 3) WITHOUT sending touchEnd for id 1.
+    await p.touch('touchStart', [[1, sx1, sy1 - 48], [3, sx2, sy2]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[1, sx1, sy1 - 48], [3, sx2, sy2 - i * 6]]); await sleep(16); }
+    await sleep(1200);
+    u = await p.fresh();
+    const ringCx = u.stick_pos[0] + 52, ringCy = u.stick_pos[1] + 52;
+    check(Math.abs(ringCx - sx2) < 6 && Math.abs(ringCy - sy2) < 6, `fresh touch reclaimed stick origin (${ringCx.toFixed(1)},${ringCy.toFixed(1)} vs ${sx2.toFixed(1)},${sy2.toFixed(1)})`);
+    check(u.stick_active && u.stick_alpha > 0.9, `reclaimed stick visible (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+    check(u.distance - dReclaim0 > 1.0, `reclaimed stick walked (${(u.distance - dReclaim0).toFixed(2)} m)`);
+    await p.touch('touchEnd', []);
+    await sleep(300);
+    u = await p.fresh();
+    check(!u.stick_active && u.stick_alpha < 0.05, `no stale ring after release (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+
+    // 2. touchCancel clears stick and hides ring; fresh left-half drag works cleanly after.
+    await p.touch('touchStart', [[4, sx1, sy1]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[4, sx1, sy1 - i * 6]]); await sleep(16); }
+    await sleep(500);
+    u = await p.fresh();
+    check(u.stick_active && u.stick_alpha > 0.9, `stick active before touchCancel (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+    await p.touch('touchCancel', []);
+    await sleep(300);
+    u = await p.fresh();
+    check(!u.stick_active && u.stick_alpha < 0.05, `touchCancel cleared stick and hid ring (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+    const dCancel = u.distance;
+    await sleep(1000);
+    u = await p.fresh();
+    check(u.distance - dCancel < 0.6, `walker stopped after touchCancel (moved ${(u.distance - dCancel).toFixed(2)} m)`);
+    const dAfterCancel = u.distance;
+    await p.touch('touchStart', [[5, sx2, sy2]]);
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[5, sx2, sy2 - i * 6]]); await sleep(16); }
+    await sleep(1200);
+    u = await p.fresh();
+    check(u.stick_active && u.stick_alpha > 0.9 && u.distance - dAfterCancel > 1.0, `fresh drag after touchCancel walked (${(u.distance - dAfterCancel).toFixed(2)} m, alpha=${u.stick_alpha})`);
+    await p.touch('touchEnd', []);
+    await sleep(300);
+
+    // 3. Quick release and re-touch inside the 140 ms fade-out tween must show the stick ring.
+    await p.touch('touchStart', [[6, sx1, sy1]]);
+    for (let i = 1; i <= 6; i++) { await p.touch('touchMove', [[6, sx1, sy1 - i * 6]]); await sleep(16); }
+    await sleep(250);
+    await p.touch('touchEnd', []);
+    await sleep(50);
+    await p.touch('touchStart', [[7, sx2, sy2]]);
+    await sleep(350);
+    u = await p.fresh();
+    r.shots.push(await p.shot('stick_recovery_retouch'));
+    check(u.stick_active && u.stick_alpha > 0.9, `quick release + re-touch showed the stick ring (active=${u.stick_active}, alpha=${u.stick_alpha})`);
+    const dQuick = u.distance;
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[7, sx2, sy2 - i * 6]]); await sleep(16); }
+    await sleep(1000);
+    u = await p.fresh();
+    check(u.distance - dQuick > 0.8, `quick re-touch stick walked (${(u.distance - dQuick).toFixed(2)} m)`);
     await p.touch('touchEnd', []);
     const errs = p.logs.filter((l) => /SCRIPT ERROR|PAGEERROR|ERROR:/.test(l));
     check(errs.length === 0, `no errors (${errs.slice(0, 3).join(' | ')})`);
