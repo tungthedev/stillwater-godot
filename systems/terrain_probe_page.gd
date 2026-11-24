@@ -47,7 +47,10 @@ const BAKE_FRAMES := 45
 const VARIANTS: Array[Dictionary] = [
 	{"name": "CONTROL forced NaN", "bits": NAN_POW, "control": true},
 	{"name": "CONTROL NaN, other post", "bits": NAN_POW, "post": "alt", "control": true},
-	{"name": "default (this build)", "bits": 0},
+	{"name": "baked ground (this build)", "bits": 0, "baked": true},
+	{"name": "baked ground, other post", "bits": 0, "post": "alt", "baked": true},
+	{"name": "baked ground, albedo only", "bits": OUT_ALBEDO | NO_ATM, "baked": true},
+	{"name": "default live (this build)", "bits": 0},
 	{"name": "OLD trail pow(neg, 2)", "bits": LEGACY_POW},
 	{"name": "OLD trail pow, guards off", "bits": LEGACY_POW | NO_GUARD},
 	{"name": "OLD reversed smoothsteps", "bits": LEGACY_RSTEP},
@@ -69,6 +72,7 @@ const VARIANTS: Array[Dictionary] = [
 	{"name": "after GRASS bake", "bits": 0, "bake": "grass"},
 	{"name": "after FLOWER bake", "bits": 0, "bake": "flowers"},
 	{"name": "after BOTH bakes", "bits": 0, "bake": "both"},
+	{"name": "baked ground after BOTH bakes", "bits": 0, "bake": "keep", "baked": true},
 	{"name": "after both + OLD all three", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC, "bake": "keep"},
 ]
 
@@ -166,7 +170,8 @@ func _build_scene() -> void:
 	_terrain.set_script(load("res://systems/terrain.gd"))
 	_terrain.setup(world)
 	_vp.add_child(_terrain)
-	_env.apply_to(_terrain.mat)
+	for m in _terrain.materials():
+		_env.apply_to(m)
 	var p: Dictionary = world.pose("trailhead")
 	var poses: Dictionary = world.meta.poses
 	var cam := Camera3D.new()
@@ -217,7 +222,9 @@ func _set_style(classic: bool) -> void:
 	_env.painterly = not classic
 	_env.hemi_sky = _env.HEMI_SKY if classic else _env.PAINTERLY_HEMI_SKY
 	_env.hemi_ground = _env.HEMI_GROUND if classic else _env.PAINTERLY_HEMI_GROUND
-	_env.apply_to(_terrain.mat)
+	_terrain.set_painterly(not classic)
+	for m in _terrain.materials():
+		_env.apply_to(m)
 	_env.apply_to(_env.sky_mat)
 
 
@@ -226,11 +233,13 @@ func _run() -> void:
 	var rows: Array[Dictionary] = []
 	# Black as the control rows read it back, per post mode (post off grades black to navy).
 	var black := {}
+	var baked_warmed := false
 	for v in VARIANTS:
 		var post_dev: bool = _float_targets
 		var post: bool = post_dev if str(v.get("post", "dev")) == "dev" else not post_dev
+		var use_baked_row := bool(v.get("baked", false))
 		var row := {"name": v.name, "bits": int(v.bits), "post": post, "classic": bool(v.get("classic", false)),
-			"isnan": bool(v.get("isnan", false)), "control": bool(v.get("control", false)), "info": str(v.get("info", ""))}
+			"baked": use_baked_row, "isnan": bool(v.get("isnan", false)), "control": bool(v.get("control", false)), "info": str(v.get("info", ""))}
 		if post and not _float_targets:
 			row.verdict = "N/A"
 			row.note = "no float colour buffers"
@@ -244,9 +253,17 @@ func _run() -> void:
 		_vp.use_hdr_2d = post
 		_env.set_post(post)
 		_set_style(row.classic)
-		_terrain.mat.shader = _shader_isnan if row.isnan else _shader
-		_terrain.mat.set_shader_parameter("dbg_terrain", row.bits)
-		for i in 3:
+		_terrain.set_live(not use_baked_row)
+		if use_baked_row:
+			_terrain.baked_mat.set_shader_parameter("dbg_terrain", row.bits)
+			_terrain.far_mat.set_shader_parameter("dbg_terrain", row.bits)
+		else:
+			_terrain.mat.shader = _shader_isnan if row.isnan else _shader
+			_terrain.mat.set_shader_parameter("dbg_terrain", row.bits)
+		var wait_frames := 24 if (use_baked_row and not baked_warmed) else 3
+		if use_baked_row:
+			baked_warmed = true
+		for i in wait_frames:
 			await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img := _vp.get_texture().get_image()

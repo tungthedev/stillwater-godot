@@ -160,6 +160,7 @@ func _run() -> void:
 
 	var c_vtx := await _check_vertex_fetch(va)
 	var c_tile := await _check_grass_tile(int(c_same.readback_row0))
+	var c_ground := await _check_ground_bake(int(c_same.readback_row0))
 
 	var checks: Array[Dictionary] = [
 		{"name": "same_frame", "pass": c_same.pass, "summary": c_same.summary, "mismatches": c_same.mismatches},
@@ -167,6 +168,7 @@ func _run() -> void:
 		{"name": "vtx_fetch", "pass": c_vtx.pass, "summary": c_vtx.summary, "mismatches": c_vtx.mismatches},
 		{"name": "tile_h_n", "pass": c_tile.h_pass, "summary": c_tile.h_summary, "mismatches": c_tile.h_mismatches},
 		{"name": "tile_tall", "pass": c_tile.t_pass, "summary": c_tile.t_summary, "mismatches": c_tile.t_mismatches},
+		{"name": "ground_bake", "pass": c_ground.pass, "summary": c_ground.summary, "mismatches": c_ground.mismatches},
 	]
 	var all_pass := true
 	for ch in checks:
@@ -182,7 +184,7 @@ func _run() -> void:
 		"dpr": Flags.device_pixel_ratio(),
 		"gl": _gl_caps(),
 		"checks": checks,
-		"detail": {"same_frame": c_same, "partial": c_partial, "vtx_fetch": c_vtx, "tile": c_tile},
+		"detail": {"same_frame": c_same, "partial": c_partial, "vtx_fetch": c_vtx, "tile": c_tile, "ground": c_ground},
 	}
 	_render_result(result)
 	var json := JSON.stringify(result)
@@ -439,6 +441,100 @@ func _check_grass_tile(a_row0: int) -> Dictionary:
 		"a0_zero_rgb_nz": [a0_zero_rgb_nz, a0_zero_n], "t_mismatches": t_mismatches,
 		"t_summary": "dens=%d tall=%d mean=%.2fm max=%.2fm a0=%d..%d yaw=%d..%d a0rgb=%d/%d" % [
 			dens_ok, tall_ok, tall_mean, tall_max, a0_min, a0_max, yaw_min, yaw_max, a0_zero_rgb_nz, a0_zero_n],
+	}
+
+
+func _check_ground_bake(a_row0: int) -> Dictionary:
+	var vp := SubViewport.new()
+	vp.size = Vector2i(16, 16)
+	vp.own_world_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(vp)
+	var p: Dictionary = world.pose("trailhead")
+	var px0 := float(p.position[0])
+	var py0 := float(p.position[1])
+	var pz0 := float(p.position[2])
+	var cam := Camera3D.new()
+	cam.position = Vector3(px0, py0, pz0)
+	cam.rotation = Vector3(float(p.pitch), float(p.yaw), 0.0)
+	vp.add_child(cam)
+	var terrain := Node3D.new()
+	terrain.name = "terrain_probe"
+	terrain.set_script(load("res://systems/terrain.gd"))
+	terrain.setup(world)
+	vp.add_child(terrain)
+
+	var tile_sz: float = terrain.GROUND_TILE
+	var tx := floori(px0 / tile_sz)
+	var tz := floori(pz0 / tile_sz)
+	var key := Vector2i(tx, tz)
+	var slot: Dictionary = {}
+	for _i in 35:
+		await get_tree().process_frame
+		if terrain.valley_ready and terrain.ground_by_key.has(key):
+			var s: Dictionary = terrain.ground_by_key[key]
+			if s.ready:
+				slot = s
+				break
+	if slot.is_empty():
+		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		return {"pass": false, "summary": "ground tile %s never ready (valley=%s)" % [str(key), str(terrain.valley_ready)], "mismatches": []}
+	await RenderingServer.frame_post_draw
+	var img: Image = terrain.ground_vp.get_texture().get_image()
+	var vimg: Image = terrain.valley_vp.get_texture().get_image()
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	img.convert(Image.FORMAT_RGBA8)
+	vimg.convert(Image.FORMAT_RGBA8)
+	var data := img.get_data()
+	var iw := img.get_width()
+	var ih := img.get_height()
+	var flip_y := a_row0 > 0
+	var spx: int = terrain.GROUND_SLOT_PX
+	var sx: int = int(slot.col) * spx
+	var sy: int = int(slot.row) * spx
+
+	var sum := Vector3.ZERO
+	var mn := 255
+	var mx := 0
+	var nz := 0
+	var n := 0
+	for ly in range(1, spx - 1, 2):
+		var ry := (ih - 1 - (sy + ly)) if flip_y else (sy + ly)
+		for lx in range(1, spx - 1, 2):
+			var k := (ry * iw + sx + lx) * 4
+			var r := data[k]
+			var g := data[k + 1]
+			var b := data[k + 2]
+			if r > 0 or g > 0 or b > 0:
+				nz += 1
+			sum += Vector3(float(r), float(g), float(b)) / 255.0
+			mn = mini(mn, mini(r, mini(g, b)))
+			mx = maxi(mx, maxi(r, maxi(g, b)))
+			n += 1
+	var mean := sum / maxf(float(n), 1.0)
+	var vres: int = terrain.VALLEY_RES
+	var vx := clampi(int((px0 / world.near_size + 0.5) * vres), 0, vres - 1)
+	var vz := clampi(int((pz0 / world.near_size + 0.5) * vres), 0, vres - 1)
+	var vry := (vres - 1 - vz) if flip_y else vz
+	var vp_c := vimg.get_pixel(vx, vry)
+	var v_rgb := Vector3(vp_c.r, vp_c.g, vp_c.b)
+	var diff := (mean - v_rgb).abs()
+	var max_diff := maxf(diff.x, maxf(diff.y, diff.z))
+	var ok := nz == n and mean.y > 0.15 and (mx - mn) >= 15 and v_rgb.y > 0.15 and max_diff < 0.35
+	var mismatches: Array = []
+	if not ok:
+		mismatches.append({"where": "slot(%d,%d)" % [int(slot.col), int(slot.row)], "exp": "nz=%d mean.g>0.15 diff<0.35" % n, "got": "nz=%d mean=%.2f,%.2f,%.2f val=%.2f,%.2f,%.2f" % [nz, mean.x, mean.y, mean.z, v_rgb.x, v_rgb.y, v_rgb.z]})
+	return {
+		"pass": ok,
+		"tile": [tx, tz],
+		"slot": [int(slot.col), int(slot.row)],
+		"mean": [snappedf(mean.x, 0.001), snappedf(mean.y, 0.001), snappedf(mean.z, 0.001)],
+		"valley": [snappedf(v_rgb.x, 0.001), snappedf(v_rgb.y, 0.001), snappedf(v_rgb.z, 0.001)],
+		"range": [mn, mx],
+		"max_diff": snappedf(max_diff, 0.001),
+		"mismatches": mismatches,
+		"summary": "tile(%d,%d) slot(%d,%d) mean=%.2f,%.2f,%.2f val=%.2f,%.2f,%.2f rng=%d..%d" % [
+			tx, tz, int(slot.col), int(slot.row), mean.x, mean.y, mean.z, v_rgb.x, v_rgb.y, v_rgb.z, mn, mx],
 	}
 
 

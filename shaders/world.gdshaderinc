@@ -70,6 +70,63 @@ vec3 w_normal(vec2 xz, float e) {
 	return normalize(vec3(hx0 - hx1, 2.0 * e, hz0 - hz1));
 }
 
+// Fast vertex height + surface normal from the same 4 bilinear height taps (0 extra fetches).
+float w_height_near_n(vec2 xz, out vec3 n) {
+	float res = float(textureSize(near_tex, 0).x);
+	vec2 f = clamp((xz / near_size + 0.5) * res - 0.5, vec2(0.0), vec2(res - 1.001));
+	vec2 fl = floor(f);
+	ivec2 i = ivec2(fl);
+	vec2 t = f - fl;
+	float a = near_code(i);
+	float b = near_code(i + ivec2(1, 0));
+	float c = near_code(i + ivec2(0, 1));
+	float d = near_code(i + ivec2(1, 1));
+	float cell = near_size / res;
+	float dhdx = mix(b - a, d - c, t.y) * near_step / cell;
+	float dhdz = mix(c - a, d - b, t.x) * near_step / cell;
+	vec3 nv = vec3(-dhdx, 1.0, -dhdz);
+	n = nv * inversesqrt(max(dot(nv, nv), 1e-20));
+	return near_min + near_step * mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
+// Far height + smooth mountain normal using 4 single-texel wide-baseline taps (4 extra fetches vs 16).
+float w_height_far_n(vec2 xz, float e, out vec3 n) {
+	int ires = textureSize(far_tex, 0).x;
+	float res = float(ires);
+	vec2 f = clamp((xz / far_size + 0.5) * res - 0.5, vec2(0.0), vec2(res - 1.001));
+	vec2 fl = floor(f);
+	ivec2 i = ivec2(fl);
+	vec2 t = f - fl;
+	float a = far_code(i);
+	float b = far_code(i + ivec2(1, 0));
+	float c = far_code(i + ivec2(0, 1));
+	float d = far_code(i + ivec2(1, 1));
+	float cell = far_size / res;
+	int step_i = max(1, int(floor(e / cell + 0.5)));
+	ivec2 ic = clamp(ivec2(floor(f + 0.5)), ivec2(0), ivec2(ires - 1));
+	float hx0 = far_code(ivec2(max(ic.x - step_i, 0), ic.y));
+	float hx1 = far_code(ivec2(min(ic.x + step_i, ires - 1), ic.y));
+	float hz0 = far_code(ivec2(ic.x, max(ic.y - step_i, 0)));
+	float hz1 = far_code(ivec2(ic.x, min(ic.y + step_i, ires - 1)));
+	float span = 2.0 * float(step_i) * cell;
+	vec3 nv = vec3((hx0 - hx1) * far_step, span, (hz0 - hz1) * far_step);
+	n = nv * inversesqrt(max(dot(nv, nv), 1e-20));
+	return far_min + far_step * mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
+float w_height_n(vec2 xz, float e, out vec3 n) {
+	float b = w_near_blend(xz);
+	if (b <= 0.0) return w_height_near_n(xz, n);
+	if (b >= 1.0) return w_height_far_n(xz, e, n);
+	vec3 nn;
+	vec3 nf;
+	float hn = w_height_near_n(xz, nn);
+	float hf = w_height_far_n(xz, e, nf);
+	vec3 nm = mix(nn, nf, b);
+	n = nm * inversesqrt(max(dot(nm, nm), 1e-20));
+	return mix(hn, hf, b);
+}
+
 float w_trail_raw(vec2 xz) {
 	vec2 uv = xz / near_size + 0.5;
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;

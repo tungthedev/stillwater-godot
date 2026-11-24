@@ -65,6 +65,7 @@ var _pose_results: Array[Dictionary] = []
 
 var _base_post := true
 var _base_style := "painterly"
+var _base_ground_live := false
 var _base_grass := true
 var _base_trees := true
 var _base_clouds := true
@@ -99,6 +100,7 @@ func start() -> void:
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	_base_post = post.is_on()
 	_base_style = env_sys.style
+	_base_ground_live = terrain_sys.live_override
 	_base_grass = grass_sys.is_on()
 	_base_trees = trees_sys.is_on()
 	_base_clouds = clouds_sys.is_on()
@@ -160,6 +162,11 @@ func _build_variants() -> void:
 		_skipped.append("post_off (base post already off)")
 	_variants.append({"id": "terrain_off", "label": "terrain off", "disjoint": false})
 	_variants.append({"id": "terrain_flat", "label": "terrain flat", "disjoint": true})
+	if _base_style != "classic":
+		if _base_ground_live:
+			_variants.append({"id": "ground_baked", "label": "ground baked", "disjoint": false})
+		else:
+			_variants.append({"id": "ground_live", "label": "ground live", "disjoint": false})
 	if _base_grass or _base_trees:
 		_variants.append({"id": "veg_off", "label": "all veg off", "disjoint": false})
 	if _base_grass:
@@ -210,6 +217,8 @@ func _reset_to_base() -> void:
 	post.set_scale_mult(1.0)
 	terrain_sys.set_on(true)
 	terrain_sys.set_flat(false)
+	terrain_sys.set_live(_base_ground_live)
+	terrain_sys.set_painterly(_base_style != "classic")
 	grass_sys.set_on(_base_grass)
 	grass_sys.set_grass_on(true)
 	grass_sys.set_flowers_on(true)
@@ -252,6 +261,10 @@ func _apply_variant(id: String) -> void:
 			terrain_sys.set_on(false)
 		"terrain_flat":
 			terrain_sys.set_flat(true)
+		"ground_live":
+			terrain_sys.set_live(true)
+		"ground_baked":
+			terrain_sys.set_live(false)
 		"veg_off":
 			grass_sys.set_on(false)
 			trees_sys.set_on(false)
@@ -277,10 +290,12 @@ func _apply_variant(id: String) -> void:
 			env_sys.set_style("classic")
 			post.set_painterly(false)
 			clouds_sys.set_painterly(false)
+			terrain_sys.set_painterly(false)
 		"style_painterly":
 			env_sys.set_style("painterly")
 			post.set_painterly(true)
 			clouds_sys.set_painterly(true)
+			terrain_sys.set_painterly(true)
 
 
 func _begin_pose() -> void:
@@ -303,8 +318,9 @@ func _begin_step(is_pose_warmup: bool) -> void:
 	_apply_variant(step.id)
 	_measuring = false
 	_warm = 0
-	_settle_s = POSE_WARMUP_S if is_pose_warmup else SWITCH_SETTLE_S
-	_settle_frames = POSE_WARMUP_FRAMES if is_pose_warmup else SWITCH_SETTLE_FRAMES
+	var long_settle: bool = is_pose_warmup or str(step.id) == "ground_baked"
+	_settle_s = POSE_WARMUP_S if long_settle else SWITCH_SETTLE_S
+	_settle_frames = POSE_WARMUP_FRAMES if long_settle else SWITCH_SETTLE_FRAMES
 	_t0_us = Time.get_ticks_usec()
 
 

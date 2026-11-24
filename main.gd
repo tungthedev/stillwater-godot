@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "s2-1"
+const BUILD := "s2-2-gnd"
 
 
 func _ready() -> void:
@@ -47,7 +47,8 @@ func _ready() -> void:
 	scene.add_child(env_sys)
 	env_sys.set_sky(world.sky_lut_tex, world.noise_tex)
 	var terrain_sys := _add(scene, "terrain", world)
-	env_sys.apply_to(terrain_sys.mat)
+	for m in terrain_sys.materials():
+		env_sys.apply_to(m)
 	var clouds_sys := _add(scene, "clouds", world)
 	for m in clouds_sys.materials():
 		env_sys.apply_to(m)
@@ -95,8 +96,8 @@ func _ready() -> void:
 	add_child(ui)
 	if game:
 		_add_game(world, scene, cam, bench_sys, ui, env_sys)
-	print("BUILD %s game=%s style=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
-		BUILD, "on" if game else "off", env_sys.style, t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
+	print("BUILD %s game=%s style=%s ground=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
+		BUILD, "on" if game else "off", env_sys.style, terrain_sys.ground_mode(), t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
 		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
 		clouds_sys.puffs, clouds_sys.tris, Flags.gpu_name()])
 	var bench_shot := Flags.value("bench-shot")
