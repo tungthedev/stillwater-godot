@@ -16,8 +16,8 @@
 // Usage: node tools/export_web.mjs   (export_world.mjs runs it at the end)
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { encodePng } from './png.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -33,59 +33,6 @@ const poses = JSON.parse(fs.readFileSync(path.join(SRC, 'poses.json'), 'utf8'));
 const paths = JSON.parse(fs.readFileSync(path.join(SRC, 'paths.json'), 'utf8'));
 const readF32 = (f) => { const b = fs.readFileSync(path.join(SRC, f)); return new Float32Array(b.buffer, b.byteOffset, b.length / 4); };
 const readI16 = (f) => { const b = fs.readFileSync(path.join(SRC, f)); return new Int16Array(b.buffer, b.byteOffset, b.length / 2); };
-
-// ---------- minimal PNG writer (8-bit, adaptive row filter) ----------
-function chunk(type, data) {
-  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
-  const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-  const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td) >>> 0);
-  return Buffer.concat([len, td, crc]);
-}
-function encodePng(w, h, channels, pixels) {
-  const colorType = { 1: 0, 2: 4, 3: 2, 4: 6 }[channels];
-  const stride = w * channels;
-  const raw = Buffer.alloc((stride + 1) * h);
-  const cand = [0, 1, 2, 3, 4].map(() => Buffer.alloc(stride));
-  const zero = Buffer.alloc(stride);
-  for (let y = 0; y < h; y++) {
-    const cur = pixels.subarray(y * stride, (y + 1) * stride);
-    const up = y > 0 ? pixels.subarray((y - 1) * stride, y * stride) : zero;
-    let best = 0, bestCost = Infinity;
-    for (let f = 0; f < 5; f++) {
-      const o = cand[f];
-      let cost = 0;
-      for (let i = 0; i < stride; i++) {
-        const a = i >= channels ? cur[i - channels] : 0;
-        const b = up[i];
-        const c = i >= channels ? up[i - channels] : 0;
-        let p;
-        if (f === 0) p = 0;
-        else if (f === 1) p = a;
-        else if (f === 2) p = b;
-        else if (f === 3) p = (a + b) >> 1;
-        else {
-          const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
-          p = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        }
-        const v = (cur[i] - p) & 255;
-        o[i] = v;
-        cost += v < 128 ? v : 256 - v;
-      }
-      if (cost < bestCost) { bestCost = cost; best = f; }
-    }
-    raw[y * (stride + 1)] = best;
-    cand[best].copy(raw, y * (stride + 1) + 1);
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8; ihdr[9] = colorType; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 // ---------- heights ----------
 const range = (a) => { let mn = Infinity, mx = -Infinity; for (const v of a) { if (v < mn) mn = v; if (v > mx) mx = v; } return [mn, mx]; };
@@ -174,6 +121,65 @@ for (const [x, z] of paths.trail.points) {
   if (!last || Math.hypot(x - last[0], z - last[1]) >= 4) { walk.push([+x.toFixed(2), +z.toFixed(2)]); last = [x, z]; }
 }
 
+// ---------- trees: the low tier's rank subset, quantised ----------
+// x, y, z are u24 codes over the 32 km far map (2 mm steps, 1 mm worst error). y is the rendered
+// ground (near map blended into far over 1828-2028 m, as the terrain draws it) minus the game's
+// sink, so trees stand on the terrain Godot draws; inside 1828 m that equals the game's y exactly.
+const TIER = 'low';
+const tier = meta.tiers[TIER];
+const WORLD = meta.far.size;
+const Q24 = 16777215;
+const tn = meta.trees.count;
+const tf = readF32(meta.trees.file);
+const rankBuf = fs.readFileSync(path.join(SRC, meta.trees.rank.file));
+const rank = new Uint16Array(rankBuf.buffer, rankBuf.byteOffset, rankBuf.length / 2);
+const kinds = fs.readFileSync(path.join(SRC, meta.trees.kind.file));
+const sampleGrid = (arr, res, size, x, z) => {
+  const fx = Math.min(Math.max((x / size + 0.5) * res - 0.5, 0), res - 1.001);
+  const fz = Math.min(Math.max((z / size + 0.5) * res - 0.5, 0), res - 1.001);
+  const ix = Math.floor(fx), iz = Math.floor(fz), tx = fx - ix, tz = fz - iz, i = iz * res + ix;
+  return (arr[i] * (1 - tx) + arr[i + 1] * tx) * (1 - tz) + (arr[i + res] * (1 - tx) + arr[i + res + 1] * tx) * tz;
+};
+const ss = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+const renderHeight = (x, z) => {
+  const t = ss(meta.heightRules.blendStart, meta.heightRules.blendEnd, Math.max(Math.abs(x), Math.abs(z)));
+  const hn = sampleGrid(near, nRes, meta.near.size, x, z);
+  return t <= 0 ? hn : hn + (sampleGrid(far, fRes, meta.far.size, x, z) - hn) * t;
+};
+const keep = [];
+const limit = tier.trees * 65536;
+for (let i = 0; i < tn; i++) if (rank[i] < limit) keep.push(i);
+if (keep.length !== tier.expectedTrees) throw new Error(`low subset ${keep.length} != ${tier.expectedTrees}`);
+const m = keep.length;
+const S_MAX = 64, SX_MIN = 0.5, TINT_MAX = 2;
+const treeBuf = Buffer.alloc(m * 19);
+let o = 0;
+const put24 = (v) => { const q = Math.round((v / WORLD + 0.5) * Q24); treeBuf[o++] = q & 255; treeBuf[o++] = (q >> 8) & 255; treeBuf[o++] = q >> 16; };
+const put16 = (q) => { treeBuf.writeUInt16LE(q, o); o += 2; };
+const field = (f, i) => tf[f * tn + i];
+let maxGroundShift = 0, bandTrees = 0;
+const ys = keep.map((i) => {
+  const x = field(0, i), z = field(2, i);
+  const y = renderHeight(x, z) - (kinds[i] === 3 ? 0.15 : 0.25);
+  if (Math.max(Math.abs(x), Math.abs(z)) > meta.heightRules.blendStart) {
+    bandTrees++;
+    maxGroundShift = Math.max(maxGroundShift, Math.abs(y - field(1, i)));
+  }
+  return y;
+});
+for (const i of keep) put24(field(0, i));
+for (const y of ys) put24(y);
+for (const i of keep) put24(field(2, i));
+for (const i of keep) put16(Math.round(field(3, i) / S_MAX * 65535));
+for (const i of keep) put16(Math.round(field(4, i) / (Math.PI * 2) * 65536) & 65535);
+for (const i of keep) put16(Math.round((field(5, i) - SX_MIN) * 65535));
+for (const i of keep) for (let c = 0; c < 3; c++) treeBuf[o++] = Math.round(Math.min(field(6 + c, i), TINT_MAX) / TINT_MAX * 255);
+for (const i of keep) treeBuf[o++] = kinds[i];
+if (o !== treeBuf.length) throw new Error('tree pack size');
+const extras = JSON.parse(fs.readFileSync(path.join(SRC, 'extras.json'), 'utf8'));
+const heroOaks = extras.heroOaks.map((t) => ({ ...t, y: renderHeight(t.x, t.z) - 0.35 }));
+console.log(`trees: ${m} (${TIER} tier), ${bandTrees} in the near/far blend band, where y moves by up to ${maxGroundShift.toFixed(2)} m from the game's near-only y`);
+
 // ---------- write ----------
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -183,6 +189,7 @@ put('near.pngdata', encodePng(nRes, nRes, 3, nearPx));
 put('far.pngdata', encodePng(fRes, fRes, 3, farPx));
 put('biome.pngdata', encodePng(meta.biome.res, meta.biome.res, 3, biomeRgb));
 put('noise.pngdata', encodePng(NOISE_RES, NOISE_RES, 4, noisePx));
+put('trees.bin', treeBuf);
 const webMeta = {
   format: 1,
   worldHash: meta.worldHash,
@@ -196,6 +203,15 @@ const webMeta = {
   blendStart: meta.heightRules.blendStart,
   blendEnd: meta.heightRules.blendEnd,
   waterLevel: meta.waterLevel,
+  trees: {
+    file: 'trees.bin', count: m, tier: TIER, tierValues: tier, worldHash: meta.worldHash,
+    subset: 'canonical trees with rank < tier density, in canonical order (WorldData.selectByRank)',
+    layout: 'planar little-endian: x, y, z u24; s, rot, sx u16; tint rgb u8 interleaved; kind u8',
+    decode: { world: WORLD, q24: Q24, sMax: S_MAX, sxMin: SX_MIN, tintMax: TINT_MAX },
+    rule: 'v = (code / q24 - 0.5) * world for x, y, z; s = code / 65535 * sMax; rot = code / 65536 * 2 pi; sx = sxMin + code / 65535; tint = code / 255 * tintMax',
+    y: 'rendered ground (near/far blend) - 0.25, bush - 0.15',
+    heroOaks,
+  },
   poses,
   walk,
   sizes,

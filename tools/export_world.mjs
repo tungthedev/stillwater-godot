@@ -151,8 +151,11 @@ for (const name of TIER_NAMES) {
   tiers[name] = {
     trees: td,
     treeDetail: q.treeDetail,
-    treeHi: q.treeHi,
-    treeLo: q.treeLo,
+    treeHeroR: q.treeHeroR,
+    treeMidR: q.treeMidR,
+    treeBushR: q.treeBushR,
+    treeAtlas: q.treeAtlas,
+    treeShadows: q.treeShadows,
     rocks: rd,
     expectedTrees: selectByRank(trees, td).length,
     expectedRocks: selectByRank(rocks, rd).length,
@@ -276,16 +279,22 @@ json('samples.json', {
 json('poses.json', poses);
 
 // ---------- tree meshes ----------
-// Mirrors KINDS in src/world/trees.js (index = placement kind v). hi is drawn near when
-// treeDetail >= 2, mid near when treeDetail is 1 (low tier); lo is the far 3D band.
+// Mirrors KINDS in src/world/trees.js (index = placement kind v): hero1 is the hero level when
+// treeDetail is 1 (low tier), hero2 when it is 2; mid is the 64 m-cell level (sparse leaf cards).
+// Far trees are impostors baked from the hero level (tools/bake_impostors.mjs).
 const KINDS = [
-  { name: 'oak', bb: 0, hi: ['fluffyBroadleaf', 11, { kind: 'oak', color: [0.13, 0.39, 0.075] }], mid: ['fluffyBroadleaf', 11, { kind: 'oak', color: [0.13, 0.39, 0.075], lod: 1 }], lo: ['fluffyBroadleaf', 11, { kind: 'oak', color: [0.13, 0.39, 0.075], lod: 0 }] },
-  { name: 'round', bb: 0, hi: ['fluffyBroadleaf', 23, { kind: 'round', color: [0.16, 0.42, 0.09] }], mid: ['fluffyBroadleaf', 23, { kind: 'round', color: [0.16, 0.42, 0.09], lod: 1 }], lo: ['fluffyBroadleaf', 23, { kind: 'round', color: [0.18, 0.43, 0.09], lod: 0 }] },
-  { name: 'pine', bb: 1, hi: ['fluffyPine', 37, { color: [0.065, 0.24, 0.10] }], mid: ['fluffyPine', 37, { color: [0.065, 0.24, 0.10], lod: 1 }], lo: ['fluffyPine', 37, { color: [0.065, 0.24, 0.10], lod: 0 }] },
-  { name: 'bush', bb: 0, hi: ['fluffyBush', 61, {}], mid: ['fluffyBush', 61, { lod: 1 }], lo: ['fluffyBush', 61, { lod: 0 }] },
-  { name: 'poplar', bb: 2, hi: ['fluffyBroadleaf', 51, { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67] }], mid: ['fluffyBroadleaf', 51, { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67], lod: 1 }], lo: ['fluffyBroadleaf', 51, { kind: 'poplar', color: [0.18, 0.46, 0.10], lod: 0 }] },
-  { name: 'larch', bb: 3, hi: ['fluffyLarch', 73, { color: [0.23, 0.38, 0.11], bark: [0.30, 0.20, 0.13] }], mid: ['fluffyLarch', 73, { color: [0.23, 0.38, 0.11], bark: [0.30, 0.20, 0.13], lod: 1 }], lo: ['fluffyLarch', 73, { color: [0.23, 0.38, 0.11], lod: 0 }] },
+  { name: 'oak',    bb: 0, gen: 'fluffyBroadleaf', seed: 11, hero: { kind: 'oak',    color: [0.13, 0.39, 0.075] }, mid: { kind: 'oak',    color: [0.13, 0.39, 0.075] } },
+  { name: 'round',  bb: 0, gen: 'fluffyBroadleaf', seed: 23, hero: { kind: 'round',  color: [0.16, 0.42, 0.09] },  mid: { kind: 'round',  color: [0.18, 0.43, 0.09] } },
+  { name: 'pine',   bb: 1, gen: 'fluffyPine',      seed: 37, hero: { color: [0.065, 0.24, 0.10] },                  mid: { color: [0.065, 0.24, 0.10] } },
+  { name: 'bush',   bb: 0, gen: 'fluffyBush',      seed: 61, hero: {},                                              mid: {} },
+  { name: 'poplar', bb: 2, gen: 'fluffyBroadleaf', seed: 51, hero: { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67] }, mid: { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67] } },
+  { name: 'larch',  bb: 3, gen: 'fluffyLarch',     seed: 73, hero: { color: [0.23, 0.38, 0.11], bark: [0.30, 0.20, 0.13] }, mid: { color: [0.23, 0.38, 0.11], bark: [0.30, 0.20, 0.13] } },
 ];
+for (const k of KINDS) {
+  k.hero1 = [k.gen, k.seed, { ...k.hero, lod: 1 }];
+  k.hero2 = [k.gen, k.seed, { ...k.hero, lod: 2 }];
+  k.midMesh = [k.gen, k.seed, { ...k.mid, lod: 0, lowPoly: true, sparse: true }];
+}
 const HERO = ['fluffyBroadleaf', 121, { kind: 'oak', color: [0.12, 0.37, 0.072] }];
 const ATTRS = [['position', 'position', 3], ['normal', 'normal', 3], ['uv', 'uv', 2], ['color', 'color', 3], ['crown', 'aCrown', 3]];
 const meshes = [];
@@ -322,7 +331,9 @@ const exportMesh = (file, kindIndex, lod, [fn, seed, opts]) => {
   });
 };
 KINDS.forEach((k, v) => {
-  for (const lod of ['hi', 'mid', 'lo']) exportMesh(`${k.name}_${lod}`, v, lod, k[lod]);
+  exportMesh(`${k.name}_hero1`, v, 'hero1', k.hero1);
+  exportMesh(`${k.name}_hero2`, v, 'hero2', k.hero2);
+  exportMesh(`${k.name}_mid`, v, 'mid', k.midMesh);
 });
 exportMesh('hero_oak', 0, 'hero', HERO);
 json('meshes.json', {

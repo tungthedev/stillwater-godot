@@ -1,0 +1,83 @@
+{
+ "stillwaterCommit": "fac84f6d004bd48c83e96207b40def3c5d2963c1",
+ "tier": "low",
+ "size": 1024,
+ "heroLod": "hero1",
+ "species": [
+  {
+   "imp": 0,
+   "kind": 0,
+   "mesh": "meshes/oak_hero1.bin"
+  },
+  {
+   "imp": 1,
+   "kind": 1,
+   "mesh": "meshes/round_hero1.bin"
+  },
+  {
+   "imp": 2,
+   "kind": 2,
+   "mesh": "meshes/pine_hero1.bin"
+  },
+  {
+   "imp": 3,
+   "kind": 4,
+   "mesh": "meshes/poplar_hero1.bin"
+  },
+  {
+   "imp": 4,
+   "kind": 5,
+   "mesh": "meshes/larch_hero1.bin"
+  }
+ ],
+ "frames": [
+  [
+   -0.005229935050010681,
+   0.42690298333764076,
+   0.0862395167350769,
+   0.8282658394524066
+  ],
+  [
+   0.022883012890815735,
+   0.4441840350627899,
+   -0.015377789735794067,
+   0.8090201485528565
+  ],
+  [
+   0.0024524033069610596,
+   0.4733287412673235,
+   0.0049783289432525635,
+   0.7273209574182254
+  ],
+  [
+   0.016956791281700134,
+   0.47879619151353836,
+   0.004763074219226837,
+   0.6957934950227344
+  ],
+  [
+   0.02220579981803894,
+   0.4975067973136902,
+   -0.008514150977134705,
+   0.7034572762244656
+  ]
+ ],
+ "grid": [
+  11,
+  0.0908203125,
+  0.06451612903225806,
+  2
+ ],
+ "gridRule": "x columns, y tile size / atlas size, z pad / tile size, w max mip level (treeImpostor.js uImpGrid)",
+ "rows": "image row 0 is the GL bottom row: sample with the game uv unchanged",
+ "leafAtlas": {
+  "file": "leaf_atlas.pngdata",
+  "size": [
+   1024,
+   1024
+  ],
+  "colorSpace": "srgb",
+  "rows": "canvas order (top row first): v_godot = 1 - v_game"
+ },
+ "coverage": 0.1008291244506836
+}

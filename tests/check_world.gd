@@ -183,11 +183,75 @@ func _check_compact(samples: Array, w: RefCounted) -> void:
 		_fail("compact biome differs by %.5f" % e_biome)
 	if c.biome_bytes != w.biome_rgb:
 		_fail("compact biome bytes differ from biome_rgb.u8")
+	_check_compact_trees(c, w)
 	for stop in ["trailhead", "forest"]:
 		var p: Dictionary = c.pose(stop)
 		var e := absf(c.height_near(p.position[0], p.position[2]) + float(c.meta.poses.eyeHeight) - float(p.position[1]))
 		if e > COMPACT_HEIGHT_TOL:
 			_fail("compact pose %s eye height differs by %.4f m" % [stop, e])
+
+
+# The shipped tree pack against the full float32 placements: same subset as the game's rank
+# selection, index for index; quantisation inside its bounds; every tree on the rendered ground.
+const TREE_XZ_TOL := 0.02
+const TREE_GROUND_TOL := 0.02
+
+
+func _check_compact_trees(c: RefCounted, w: RefCounted) -> void:
+	var tm: Dictionary = c.meta.trees
+	if str(tm.worldHash) != str(w.meta.worldHash):
+		_fail("tree pack is from world %s, full export is %s" % [tm.worldHash, w.meta.worldHash])
+	var t: Dictionary = c.load_trees()
+	if t.is_empty():
+		_fail("tree pack failed to load")
+		return
+	var tier: Dictionary = w.tier(str(tm.tier))
+	var want: PackedInt32Array = w.select_by_rank(float(tier.trees))
+	if int(t.count) != want.size() or int(t.count) != int(tier.expectedTrees):
+		_fail("tree pack holds %d trees, %s tier selects %d (expected %d)" % [t.count, tm.tier, want.size(), int(tier.expectedTrees)])
+		return
+	var d: Dictionary = tm.decode
+	var e_xz := 0.0
+	var e_s := 0.0
+	var e_rot := 0.0
+	var e_sx := 0.0
+	var e_tint := 0.0
+	var e_ground := 0.0
+	var e_game_y := 0.0
+	var band := 0
+	var e_band := 0.0
+	var kind_bad := 0
+	var tk: float = float(t.tint_max) / 255.0
+	for j in want.size():
+		var i := want[j]
+		e_xz = maxf(e_xz, Vector2(t.x[j] - w.tree_x[i], t.z[j] - w.tree_z[i]).length())
+		e_s = maxf(e_s, absf(t.s[j] - w.tree_s[i]))
+		e_rot = maxf(e_rot, absf(angle_difference(t.rot[j], w.tree_rot[i])))
+		e_sx = maxf(e_sx, absf(t.sx[j] - w.tree_sx[i]))
+		var tint: Color = w.tree_tint[i]
+		e_tint = maxf(e_tint, maxf(absf(t.tint[j * 3] * tk - tint.r), maxf(absf(t.tint[j * 3 + 1] * tk - tint.g), absf(t.tint[j * 3 + 2] * tk - tint.b))))
+		if t.kind[j] != w.tree_kind[i]:
+			kind_bad += 1
+		# y must be the rendered ground (Godot's own height function on the shipped pack) - sink.
+		var sink := 0.15 if w.tree_kind[i] == 3 else 0.25
+		e_ground = maxf(e_ground, absf(t.y[j] - (c.height(t.x[j], t.z[j]) - sink)))
+		if maxf(absf(w.tree_x[i]), absf(w.tree_z[i])) > c.blend_start:
+			band += 1
+			e_band = maxf(e_band, absf(t.y[j] - w.tree_y[i]))
+		else:
+			e_game_y = maxf(e_game_y, absf(t.y[j] - w.tree_y[i]))
+	print("tree pack: %d trees (%s tier, same indices as select_by_rank), max error xz %.4f m, s %.4f, rot %.5f rad, sx %.5f, tint %.4f, kind mismatches %d" % [
+		want.size(), tm.tier, e_xz, e_s, e_rot, e_sx, e_tint, kind_bad])
+	print("tree pack ground: y vs rendered height - sink max %.4f m; vs game y outside the blend band %.4f m; %d trees in the band differ from the game's near-only y by up to %.2f m" % [
+		e_ground, e_game_y, band, e_band])
+	if e_xz > TREE_XZ_TOL:
+		_fail("tree pack moves a tree %.4f m horizontally" % e_xz)
+	if e_ground > TREE_GROUND_TOL or e_game_y > TREE_GROUND_TOL:
+		_fail("tree pack ground contact off by %.4f m (game y outside the band %.4f m)" % [e_ground, e_game_y])
+	if e_s > float(d.sMax) / 65535.0 or e_sx > 1.0 / 65535.0 or e_rot > TAU / 65536.0 or e_tint > float(d.tintMax) / 255.0 * 0.5 + 1e-4:
+		_fail("tree pack scale/rotation/tint quantisation error too large")
+	if kind_bad > 0:
+		_fail("tree pack kinds differ for %d trees" % kind_bad)
 
 
 static func _sci(v: float) -> String:

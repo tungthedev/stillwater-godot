@@ -184,3 +184,49 @@ func walk_points() -> PackedVector2Array:
 	for p in meta.walk:
 		out.append(Vector2(p[0], p[1]))
 	return out
+
+
+# The tree pack (meta.trees, written by tools/export_web.mjs): the tier's rank subset in
+# canonical order. Returns planar arrays x, y, z, s, rot, sx (PackedFloat32Array), tint (rgb
+# bytes, value = byte / 255 * tint_max) and kind (bytes), or an empty Dictionary on error.
+func load_trees() -> Dictionary:
+	var tm: Dictionary = meta.trees
+	var bytes := FileAccess.get_file_as_bytes(dir.path_join(tm.file))
+	var n := int(tm.count)
+	if bytes.size() != n * 19:
+		push_error("compact_world: %s is %d bytes, expected %d" % [tm.file, bytes.size(), n * 19])
+		return {}
+	var d: Dictionary = tm.decode
+	var wsize := float(d.world)
+	var k24 := wsize / float(d.q24)
+	var half := wsize * 0.5
+	var out := {
+		"count": n,
+		"x": _u24(bytes, 0, n, k24, half),
+		"y": _u24(bytes, n * 3, n, k24, half),
+		"z": _u24(bytes, n * 6, n, k24, half),
+		"s": _u16(bytes, n * 9, n, float(d.sMax) / 65535.0, 0.0),
+		"rot": _u16(bytes, n * 11, n, TAU / 65536.0, 0.0),
+		"sx": _u16(bytes, n * 13, n, 1.0 / 65535.0, float(d.sxMin)),
+		"tint": bytes.slice(n * 15, n * 18),
+		"tint_max": float(d.tintMax),
+		"kind": bytes.slice(n * 18, n * 19),
+	}
+	return out
+
+
+static func _u24(bytes: PackedByteArray, o: int, n: int, k: float, half: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(n)
+	for i in n:
+		var b := o + i * 3
+		out[i] = (bytes[b] | (bytes[b + 1] << 8) | (bytes[b + 2] << 16)) * k - half
+	return out
+
+
+static func _u16(bytes: PackedByteArray, o: int, n: int, k: float, base: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(n)
+	for i in n:
+		out[i] = base + bytes.decode_u16(o + i * 2) * k
+	return out
