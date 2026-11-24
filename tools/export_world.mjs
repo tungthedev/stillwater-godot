@@ -45,11 +45,16 @@ if (world.hash !== manifest.worldHash) {
 const R = VALLEY;
 const farHf = new HeightField(world.farHeights, null, R.farRes, R.farSize);
 
-// --skip-atlas keeps the previously rendered atlas; everything else is rewritten from scratch.
+// Godot's *.import files carry import settings, so they survive a re-export; --skip-atlas also
+// keeps the previously rendered atlas. Everything else is rewritten from scratch.
 const atlasPath = path.join(OUT, 'atlas.png');
 const keptAtlas = SKIP_ATLAS && fs.existsSync(atlasPath) ? fs.readFileSync(atlasPath) : null;
+const keptImports = fs.existsSync(OUT)
+  ? fs.readdirSync(OUT, { recursive: true }).filter((f) => f.endsWith('.import')).map((f) => [f, fs.readFileSync(path.join(OUT, f))])
+  : [];
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(path.join(OUT, 'meshes'), { recursive: true });
+for (const [f, buf] of keptImports) fs.writeFileSync(path.join(OUT, f), buf);
 const sizes = {};
 const write = (rel, data) => {
   const buf = typeof data === 'string' ? Buffer.from(data) : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
@@ -258,7 +263,16 @@ addSample('blend band corner', -1950.7, 1700.2);
 addSample('blend band 2010', 2010.3, -2015.9);
 addSample('far only', 2500.5, 100.25);
 addSample('far mountains', -6000.3, -5200.7);
-json('samples.json', { note: 'h = WorldData.height (near map only, clamped); hFar = far map; hRender = GPU w_height blend.', samples: sampleList });
+// Probe placements check every planar field, not just the rank array.
+const probeIdx = (n) => [0, 1, Math.floor(n / 3), Math.floor(n / 2), n - 1];
+const treeProbes = probeIdx(tn).map((i) => ({ i, ...trees[i] }));
+const rockProbes = probeIdx(rn).map((i) => ({ i, ...rocks[i] }));
+json('samples.json', {
+  note: 'h = WorldData.height (near map only, clamped); hFar = far map; hRender = GPU w_height blend.',
+  samples: sampleList,
+  treeProbes,
+  rockProbes,
+});
 json('poses.json', poses);
 
 // ---------- tree meshes ----------

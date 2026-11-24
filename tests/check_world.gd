@@ -83,6 +83,48 @@ func _init() -> void:
 		print("pose %s: (%.2f, %.2f, %.2f) yaw %.4f pitch %.3f, eye error %s m" % [stop, pos[0], pos[1], pos[2], p.yaw, p.pitch, _sci(e)])
 		if e > HEIGHT_TOL:
 			_fail("pose %s eye height differs by %.6f m" % [stop, e])
+		# Godot's default Euler order is YXZ like three.js, so (pitch, yaw, 0) must aim at lookAt.
+		var fwd := -Basis.from_euler(Vector3(p.pitch, p.yaw, 0.0)).z
+		var look: Array = p.lookAt
+		var want := (Vector3(look[0], look[1], look[2]) - Vector3(pos[0], pos[1], pos[2])).normalized()
+		var ea := fwd.distance_to(want)
+		print("pose %s: Godot camera forward vs lookAt error %s" % [stop, _sci(ea)])
+		if ea > 1e-5:
+			_fail("pose %s rotation does not aim at lookAt in Godot" % stop)
+
+	# Every tree: y was set by the game as near height - 0.25 (bush 0.15), which ties x, y, z and
+	# kind together and catches a wrong planar stride.
+	var worst_y := 0.0
+	for i in w.tree_count:
+		var sink := 0.15 if w.tree_kind[i] == 3 else 0.25
+		worst_y = maxf(worst_y, absf(w.tree_y[i] - (w.height_near(w.tree_x[i], w.tree_z[i]) - sink)))
+	print("tree y vs height_near - sink: max %s m over %d trees" % [_sci(worst_y), w.tree_count])
+	if worst_y > 1e-3:
+		_fail("tree y does not follow the height grid (%.6f m)" % worst_y)
+
+	var probes: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/valley/samples.json"))
+	var worst_probe := 0.0
+	for t in probes.treeProbes:
+		var i: int = t.i
+		var tint: Color = w.tree_tint[i]
+		var got := [w.tree_x[i], w.tree_y[i], w.tree_z[i], w.tree_s[i], w.tree_rot[i], w.tree_sx[i], tint.r, tint.g, tint.b]
+		var want := [t.x, t.y, t.z, t.s, t.rot, t.sx, t.tint[0], t.tint[1], t.tint[2]]
+		for k in got.size():
+			worst_probe = maxf(worst_probe, absf(float(got[k]) - float(want[k])) / maxf(1.0, absf(float(want[k]))))
+		if w.tree_kind[i] != int(t.v) or w.tree_salt[i] != int(t.salt) or w.tree_rank[i] != int(float(t.rank) * 65536.0):
+			_fail("tree probe %d kind/salt/rank differs" % i)
+	for r in probes.rockProbes:
+		var i: int = r.i
+		var got := [w.rock_x[i], w.rock_y[i], w.rock_z[i], w.rock_s[i], w.rock_rot[i], w.rock_tilt_x[i], w.rock_tilt_z[i]]
+		var want := [r.x, r.y, r.z, r.s, r.rot, r.tilt[0], r.tilt[1]]
+		for k in got.size():
+			worst_probe = maxf(worst_probe, absf(float(got[k]) - float(want[k])) / maxf(1.0, absf(float(want[k]))))
+		if w.rock_kind[i] != int(r.v) or w.rock_rank[i] != int(float(r.rank) * 65536.0):
+			_fail("rock probe %d kind/rank differs" % i)
+	print("placement probes: %d trees, %d rocks, max relative error %s (float32 storage)" % [
+		probes.treeProbes.size(), probes.rockProbes.size(), _sci(worst_probe)])
+	if worst_probe > 1e-6:
+		_fail("placement probe fields differ (%s)" % _sci(worst_probe))
 
 	var mesh_files := 0
 	for m in w.meshes.meshes:
