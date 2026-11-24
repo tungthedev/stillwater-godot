@@ -24,7 +24,13 @@ uniform vec2 sun_uv;
 uniform float sun_vis = 0.0;
 uniform vec3 ray_color = vec3(1.0);
 uniform float painterly = 1.0;
-const vec3 WB = vec3(1.0);
+uniform vec3 grade_wb = vec3(1.0, 1.0, 1.0);
+uniform vec3 grade_shadow_tint = vec3(0.88, 0.90, 1.20);
+uniform vec3 grade_shadow_cast = vec3(0.93, 0.92, 1.14);
+uniform vec3 grade_lift_u = vec3(0.006, 0.006, 0.016);
+uniform float grade_sat_u = 1.12;
+uniform float grade_contrast_u = 0.08;
+uniform float day_fresh_k = 1.0;
 const vec3 SHADOW_TINT = vec3(0.90, 0.95, 1.14);
 const vec3 LIFT = vec3(0.004, 0.006, 0.012);
 const float SAT = 1.1;
@@ -42,8 +48,8 @@ vec3 styl_tone(vec3 x) {
 vec3 to_srgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float fx_l(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-vec3 fx_encode(vec3 c) { vec3 x = c * exposure * WB; return x / (1.0 + fx_l(x)); }
-vec3 fx_decode(vec3 t) { return t / max(1.0 - fx_l(t), 1e-3) / max(exposure * WB, vec3(1e-4)); }
+vec3 fx_encode(vec3 c) { vec3 x = c * exposure * grade_wb; return x / (1.0 + fx_l(x)); }
+vec3 fx_decode(vec3 t) { return t / max(1.0 - fx_l(t), 1e-3) / max(exposure * grade_wb, vec3(1e-4)); }
 float fx_luma(vec3 t) { return sqrt(max(fx_l(t), 0.0)); }
 
 void fragment() {
@@ -76,21 +82,21 @@ void fragment() {
 			col += ray_color * vec3(1.0, 0.86, 0.66) * exp(-dot(sd, sd) * 5.2) * 0.045 * sun_vis;
 		}
 		col *= exposure;
-		col *= WB;
+		col *= grade_wb;
 		col = styl_tone(col);
-		{
+		if (day_fresh_k > 0.001) {
 			float mx = max(col.r, max(col.g, col.b)), mn = min(col.r, min(col.g, col.b));
 			float chroma = mx - mn;
 			float is_green = smoothstep(0.01, 0.09, col.g - max(col.r * 0.84, col.b)) * smoothstep(0.02, 0.14, chroma);
 			float day_fresh = is_green * smoothstep(0.16, 0.45, mx);
-			col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45);
+			col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45 * day_fresh_k);
 		}
 		float Lg = dot(col, vec3(0.2126, 0.7152, 0.0722));
-		vec3 s_tint = painterly > 0.5 ? vec3(0.88, 0.90, 1.20) : SHADOW_TINT;
-		vec3 s_cast = painterly > 0.5 ? vec3(0.93, 0.92, 1.14) : vec3(0.95, 0.96, 1.08);
-		vec3 lift = painterly > 0.5 ? vec3(0.006, 0.006, 0.016) : LIFT;
-		float sat = painterly > 0.5 ? 1.12 : SAT;
-		float contrast = painterly > 0.5 ? 0.08 : CONTRAST;
+		vec3 s_tint = painterly > 0.5 ? grade_shadow_tint : SHADOW_TINT;
+		vec3 s_cast = painterly > 0.5 ? grade_shadow_cast : vec3(0.95, 0.96, 1.08);
+		vec3 lift = painterly > 0.5 ? grade_lift_u : LIFT;
+		float sat = painterly > 0.5 ? grade_sat_u : SAT;
+		float contrast = painterly > 0.5 ? grade_contrast_u : CONTRAST;
 		float vig = painterly > 0.5 ? 0.24 : VIGNETTE;
 		col *= mix(s_tint, vec3(1.04, 1.0, 0.94), smoothstep(0.08, 0.68, Lg));
 		col = mix(col, vec3(Lg) * s_cast, (1.0 - smoothstep(0.04, 0.36, Lg)) * 0.16);

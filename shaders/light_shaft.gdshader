@@ -44,7 +44,7 @@ void vertex() {
 
 	float d = length(cam - base);
 	float cot_clear = ao_spot.z > 0.1 ? smoothstep(82.0, 120.0, length(base.xz - ao_spot.xy)) : 1.0;
-	float sun_up = clamp(sun_dir.y * 3.0, 0.0, 1.0);
+	float sun_up = clamp(sun_dir.y * 3.0, 0.0, 1.0) * sun_disc_vis;
 	float grazing = smoothstep(0.06, 0.28, sin_ang);
 	v_fade = cot_clear * sun_up * grazing * smoothstep(3.5, 9.5, d) * w_rstep(max_d, max_d * 0.52, d);
 

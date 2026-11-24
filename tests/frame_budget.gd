@@ -30,6 +30,9 @@ func _init() -> void:
 	var vp := SubViewport.new()
 	vp.size = views[0]
 	root.add_child(vp)
+	var env_sys := Node3D.new()
+	env_sys.set_script(load("res://systems/environment.gd"))
+	vp.add_child(env_sys)
 	var terrain := Node3D.new()
 	terrain.set_script(load("res://systems/terrain.gd"))
 	terrain.setup(world)
@@ -59,6 +62,12 @@ func _init() -> void:
 	air.set_script(load("res://systems/air.gd"))
 	air.setup(world)
 	vp.add_child(air)
+	var fauna := Node3D.new()
+	fauna.set_script(load("res://systems/fauna.gd"))
+	fauna.setup(world)
+	vp.add_child(fauna)
+	env_sys.add_tod_listener(func(e: Node) -> void: props.set_night_glow(e.night_glow))
+	env_sys.add_tod_listener(fauna.apply_tod)
 	var clouds := Node3D.new()
 	clouds.set_script(load("res://systems/clouds.gd"))
 	clouds.setup(world)
@@ -66,6 +75,7 @@ func _init() -> void:
 	var cam := Camera3D.new()
 	vp.add_child(cam)
 	await process_frame
+	env_sys.set_sky(world.sky_lut_tex, world.noise_tex)
 	cam.fov = float(world.meta.poses.fovVerticalDeg)
 	cam.near = float(world.meta.poses.near)
 	cam.far = float(world.meta.poses.far)
@@ -75,10 +85,18 @@ func _init() -> void:
 	for view in views:
 		vp.size = view
 		await process_frame
-		var stops: Array[String] = ["trailhead", "forest", "lake", "cottage"]
+		var checks: Array[Array] = [
+			["trailhead", "noon"], ["forest", "noon"], ["lake", "noon"], ["cottage", "noon"],
+		]
 		if view == phone and grass.is_painted():
-			stops.append("waterfall")
-		for stop in stops:
+			checks.append(["waterfall", "noon"])
+			checks.append(["sheep", "noon"])
+			checks.append(["trailhead", "night"])
+			checks.append(["cottage", "night"])
+		for item in checks:
+			var stop: String = item[0]
+			var tod: String = item[1]
+			env_sys.set_tod(tod)
 			var s: Dictionary = world.pose(stop)
 			cam.position = Vector3(s.position[0], s.position[1], s.position[2])
 			cam.rotation = Vector3(float(s.pitch), float(s.yaw), 0.0)
@@ -91,15 +109,19 @@ func _init() -> void:
 			undergrowth.count_drawn(cam)
 			air.update_cull(cam, true)
 			air.count_drawn(cam)
+			fauna.update_cull(cam, true)
+			fauna.count_drawn(cam)
 			grass.update_rings(cam, true)
-			var tris: int = nodes * terrain.tris_per_node + water.last_tris + props.last_tris + undergrowth.last_tris + air.last_tris + trees.last_tris + grass.last_tris + clouds.tris + OTHER_TRIS
-			var draws: int = terrain.last_draws + water.last_draws + props.last_draws + undergrowth.last_draws + air.last_draws + trees.last_draws + grass.last_draws + clouds.last_draws + OTHER_DRAWS
-			var props_ok: bool = props.last_draws <= 8 and (props.last_tris > 0 if (stop != "forest" and stop != "waterfall") else true)
+			var tris: int = nodes * terrain.tris_per_node + water.last_tris + props.last_tris + undergrowth.last_tris + air.last_tris + fauna.last_tris + trees.last_tris + grass.last_tris + clouds.tris + OTHER_TRIS
+			var draws: int = terrain.last_draws + water.last_draws + props.last_draws + undergrowth.last_draws + air.last_draws + fauna.last_draws + trees.last_draws + grass.last_draws + clouds.last_draws + OTHER_DRAWS
+			var props_lim := 10 if tod == "night" else 8
+			var props_ok: bool = props.last_draws <= props_lim and (props.last_tris > 0 if (stop != "forest" and stop != "waterfall" and stop != "sheep") else true)
 			var w4_draws: int = undergrowth.last_draws + air.last_draws
 			var w4_ok: bool = w4_draws <= 6 and (undergrowth.last_tris > 0 if stop == "forest" else true) and air.last_tris > 0
-			var pass_: bool = tris <= TRIS and draws <= DRAWS and water.last_draws <= 3 and water.last_tris > 0 and props_ok and w4_ok and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
+			var w5_ok: bool = fauna.last_draws <= 4 and (fauna.last_tris > 0 if (stop == "sheep" or tod == "night") else true)
+			var pass_: bool = tris <= TRIS and draws <= DRAWS and water.last_draws <= 3 and water.last_tris > 0 and props_ok and w4_ok and w5_ok and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
 			ok = ok and pass_
-			print("budget %s %dx%d: terrain %d + water %d (%d draws) + props %d (%d draws) + undergrowth %d (%d draws) + air %d (%d draws) + trees %d + grass %d + clouds %d = %d triangles, %d draws (w4 %d draws; trees %d, grass %d) %s" % [
-				stop, view.x, view.y, nodes * terrain.tris_per_node, water.last_tris, water.last_draws, props.last_tris, props.last_draws, undergrowth.last_tris, undergrowth.last_draws, air.last_tris, air.last_draws, trees.last_tris, grass.last_tris, clouds.tris, tris, draws, w4_draws, trees.last_draws, grass.last_draws, "ok" if pass_ else "OVER"])
+			print("budget %s(%s) %dx%d: terrain %d + water %d (%d draws) + props %d (%d draws) + undergrowth %d (%d draws) + air %d (%d draws) + fauna %d (%d draws) + trees %d + grass %d + clouds %d = %d triangles, %d draws (w4 %d, w5 %d; trees %d, grass %d) %s" % [
+				stop, tod, view.x, view.y, nodes * terrain.tris_per_node, water.last_tris, water.last_draws, props.last_tris, props.last_draws, undergrowth.last_tris, undergrowth.last_draws, air.last_tris, air.last_draws, fauna.last_tris, fauna.last_draws, trees.last_tris, grass.last_tris, clouds.tris, tris, draws, w4_draws, fauna.last_draws, trees.last_draws, grass.last_draws, "ok" if pass_ else "OVER"])
 	print("FRAME_BUDGET %s (budget %d triangles, %d draws)" % ["PASS" if ok else "FAIL", TRIS, DRAWS])
 	quit(0 if ok else 1)

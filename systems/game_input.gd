@@ -36,11 +36,15 @@ const KEY_ACTIONS := {
 	KEY_E: ["sit", true],
 	KEY_H: ["toggleHud", true],
 	KEY_G: ["dev", false],
+	KEY_M: ["toggleMute", false],
+	KEY_F: ["toggleLamp", false],
+	KEY_BRACKETLEFT: ["timeBack", true],
+	KEY_BRACKETRIGHT: ["timeForward", true],
 }
-const HOLD_KEYS := {KEY_SHIFT: "stride"}
-const ALLOW_WHILE_PAUSED: Array[String] = ["pause", "autoWalk", "sit", "toggleHud", "dev"]
-# `dev` works on the title screen too: the perf panel is not part of the game.
-const ALWAYS: Array[String] = ["dev"]
+const HOLD_KEYS := {KEY_SHIFT: "stride", KEY_T: "hurryTime"}
+const ALLOW_WHILE_PAUSED: Array[String] = ["pause", "autoWalk", "sit", "toggleHud", "dev", "toggleMute", "toggleLamp"]
+# `dev` and `toggleMute` work on the title screen too.
+const ALWAYS: Array[String] = ["dev", "toggleMute"]
 
 var active := false
 var paused := false

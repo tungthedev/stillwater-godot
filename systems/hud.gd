@@ -62,6 +62,7 @@ var paused_h: Label
 var paused_keys: VBoxContainer
 var resume_btn: Button
 var dev_btn: Button
+var sound_btn: Button
 
 var _fonts := {}
 var _tweens := {}
@@ -160,6 +161,7 @@ func _active_touch_buttons() -> Array[Dictionary]:
 		return []
 	if paused_layer.is_visible_in_tree():
 		return [
+			{"btn": sound_btn, "cb": func() -> void: button.emit("toggleMute")},
 			{"btn": dev_btn, "cb": func() -> void: button.emit("dev")},
 			{"btn": resume_btn, "cb": func() -> void: resume_pressed.emit()},
 		]
@@ -574,25 +576,48 @@ func _build_paused() -> void:
 	resume_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_guard_button(resume_btn)
 	resume_btn.pressed.connect(func() -> void: resume_pressed.emit())
+	var btn_row := HBoxContainer.new()
+	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	btn_row.add_theme_constant_override("separation", 12)
+	var dsb := _box(Color(0, 0, 0, 0), Color(0.957, 0.925, 0.867, 0.2), 3)
+	dsb.content_margin_left = 10
+	dsb.content_margin_right = 10
+	dsb.content_margin_top = 6
+	dsb.content_margin_bottom = 6
+	sound_btn = Button.new()
+	sound_btn.text = "SOUND · ON"
+	sound_btn.focus_mode = Control.FOCUS_NONE
+	sound_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	sound_btn.add_theme_font_override("font", _font(SANS, 400, 11, 0.3))
+	sound_btn.add_theme_font_size_override("font_size", 11)
+	for st in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+		sound_btn.add_theme_stylebox_override(st, dsb)
+	for st in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		sound_btn.add_theme_color_override(st, DIM)
+	_guard_button(sound_btn)
+	sound_btn.pressed.connect(func() -> void: button.emit("toggleMute"))
 	dev_btn = Button.new()
 	dev_btn.text = "PERF · BENCH"
 	dev_btn.focus_mode = Control.FOCUS_NONE
 	dev_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	dev_btn.add_theme_font_override("font", _font(SANS, 400, 11, 0.3))
 	dev_btn.add_theme_font_size_override("font_size", 11)
-	var dsb := _box(Color(0, 0, 0, 0), Color(0.957, 0.925, 0.867, 0.2), 3)
-	dsb.content_margin_left = 10
-	dsb.content_margin_right = 10
-	dsb.content_margin_top = 6
-	dsb.content_margin_bottom = 6
 	for st in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
 		dev_btn.add_theme_stylebox_override(st, dsb)
 	for st in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
 		dev_btn.add_theme_color_override(st, DIM)
 	_guard_button(dev_btn)
 	dev_btn.pressed.connect(func() -> void: button.emit("dev"))
-	for c in [paused_h, _spacer(), paused_keys, _spacer(), dev_btn, _spacer(), resume_btn]:
+	btn_row.add_child(sound_btn)
+	btn_row.add_child(dev_btn)
+	for c in [paused_h, _spacer(), paused_keys, _spacer(), btn_row, _spacer(), resume_btn]:
 		paused_box.add_child(c)
+
+
+func set_sound_muted(muted: bool) -> void:
+	if sound_btn != null:
+		sound_btn.text = "SOUND · OFF" if muted else "SOUND · ON"
 
 
 func _on_paused_input(e: InputEvent) -> void:
@@ -756,8 +781,8 @@ func _layout() -> void:
 	else:
 		_set_paused_keys([
 			[[true, "WASD"], [false, "walk · "], [true, "Shift"], [false, "longer stride"]],
-			[[true, "Q"], [false, "follow the trail automatically"]],
-			[[true, "E"], [false, "sit down for a while"]],
+			[[true, "Q"], [false, "follow trail · "], [true, "E"], [false, "sit & rest"]],
+			[[true, "F"], [false, "lantern · "], [true, "M"], [false, "sound · "], [true, "[ ] / T"], [false, "time"]],
 			[[true, "H"], [false, "hide hud · "], [true, "G"], [false, "perf panel"]],
 		])
 	resume_btn.text = ("tap to continue" if touch else "click to continue").to_upper()

@@ -1004,6 +1004,257 @@ console.log(`rocks: ${rCount} canonical + ${rockRecords.length - rCount} prop/ca
   }
 }
 
+// ---------- W5 fauna (sheep herds), cottage chimney smoke anchor & campfires ----------
+const renderNormal = (x, z, e = 1.0) => {
+  const hx = renderHeight(x + e, z) - renderHeight(x - e, z);
+  const hz = renderHeight(x, z + e) - renderHeight(x, z - e);
+  const l = Math.hypot(-hx, 2 * e, -hz) || 1;
+  return [-hx / l, (2 * e) / l, -hz / l];
+};
+
+// Chimney top in world space: cottage local (3.0, y2 + 6.65, -1.6) with y2 = 6.9, scale = 1.2, rotY = hry.
+const chimneyPos = (() => {
+  const lx = 3.0 * house.scale, ly = (6.9 + 6.65) * house.scale, lz = -1.6 * house.scale;
+  const cy = Math.cos(hry), sy = Math.sin(hry);
+  return [
+    +(hcx + lx * cy + lz * sy).toFixed(3),
+    +(houseY + ly).toFixed(3),
+    +(hcz - lx * sy + lz * cy).toFixed(3),
+  ];
+})();
+
+// Two cozy stone-ring campfires: one beside the cottage front yard (clear of trail/flagstones),
+// and one near the lakeside bench overlooking Stillwater Lake.
+const campfires = [];
+{
+  const rx2 = -hfz, rz2 = hfx;
+  // Cottage front-right lawn campfire (~10.5 m forward, ~6.2 m right of cottage center).
+  const cf1x = hcx + hfx * 10.5 + rx2 * 6.2;
+  const cf1z = hcz + hfz * 10.5 + rz2 * 6.2;
+  campfires.push({
+    name: 'cottage',
+    x: +cf1x.toFixed(2),
+    y: +renderHeight(cf1x, cf1z).toFixed(3),
+    z: +cf1z.toFixed(2),
+    r: 0.72,
+  });
+  propColliders.push({ x: +cf1x.toFixed(2), z: +cf1z.toFixed(2), r: 0.95 });
+
+  // Lakeside bench campfire (~4.6 m right-forward of bench 0, well above waterLevel).
+  const b0 = benches[0];
+  const bfX = Math.sin(b0.ry), bfZ = Math.cos(b0.ry);
+  const brX = Math.cos(b0.ry), brZ = -Math.sin(b0.ry);
+  const cf2x = b0.x + bfX * 2.8 + brX * 4.4;
+  const cf2z = b0.z + bfZ * 2.8 + brZ * 4.4;
+  if (renderHeight(cf2x, cf2z) > meta.waterLevel + 1.0) {
+    campfires.push({
+      name: 'lake',
+      x: +cf2x.toFixed(2),
+      y: +renderHeight(cf2x, cf2z).toFixed(3),
+      z: +cf2z.toFixed(2),
+      r: 0.68,
+    });
+    propColliders.push({ x: +cf2x.toFixed(2), z: +cf2z.toFixed(2), r: 0.90 });
+  }
+}
+
+// Sheep herds (port of village.js lines 338-360 & animals.js Herd lines 271-394).
+const sheepList = [];
+{
+  const side = [-hfx, -hfz];
+  const findMeadow = (h) => {
+    let best = h, bs = 1e9;
+    for (let r = 0; r <= 120; r += 12) for (let k = 0; k < 16; k++) {
+      const a = k / 16 * Math.PI * 2, x = h.x + Math.cos(a) * r, z = h.z + Math.sin(a) * r;
+      const y = renderHeight(x, z);
+      if (y < meta.waterLevel + 2.0) continue;
+      const f = sampleForest(x, z) + sampleForest(x + 15, z) + sampleForest(x - 15, z) + sampleForest(x, z + 15) + sampleForest(x, z - 15);
+      const ny = renderNormal(x, z, 3.0)[1];
+      const sc = f * 10 + r * 0.01 + (1 - ny) * 20;
+      if (sc < bs) { bs = sc; best = { x, z, n: h.n }; }
+    }
+    return best;
+  };
+  const herds = [
+    { x: tAt(70)[0] - side[0] * 24, z: tAt(70)[1] - side[1] * 24, n: 10 },
+    { x: hcx + side[0] * 32, z: hcz + side[1] * 32, n: 7 },
+    { x: paths.trail.shore.x + 60, z: paths.trail.shore.z + 70, n: 8 },
+    { x: (tAt(0)[0] + paths.trail.shore.x) * 0.5 + 40, z: (tAt(0)[1] + paths.trail.shore.z) * 0.5 - 40, n: 7 },
+  ].map(findMeadow);
+
+  const rnd = mulberry32(77);
+  const simRnd = mulberry32(7701);
+  const roam = 13.0, sp0 = 0.5, collide = 0.55;
+  const raw = [];
+  for (const hd of herds) {
+    for (let i = 0; i < hd.n; i++) {
+      const a = rnd() * 6.28, r = 3 + rnd() * (roam * 0.6);
+      const isLamb = i % 4 === 1;
+      const scBase = isLamb ? (0.56 + rnd() * 0.14) : (0.94 + rnd() * 0.26);
+      raw.push({
+        x: hd.x + Math.cos(a) * r,
+        z: hd.z + Math.sin(a) * r,
+        hx: hd.x,
+        hz: hd.z,
+        yaw: rnd() * 6.28,
+        tx: 0,
+        tz: 0,
+        walking: i % 3 === 0,
+        timer: rnd() * 8,
+        graze: (i % 3 === 0) ? 0.08 : (i % 2 === 0 ? 0.95 : 0.48),
+        phase: rnd() * 10,
+        s: scBase * (1.10 + rnd() * (1.56 - 1.10)) * 0.92,
+        sx: 0.90 + rnd() * 0.22,
+        sz: 0.92 + rnd() * 0.18,
+        coat: raw.length % 5,
+      });
+    }
+  }
+  const dt = 0.016;
+  for (let it = 0; it < 65; it++) {
+    for (let i = 0; i < raw.length; i++) {
+      const s = raw[i];
+      s.timer -= dt;
+      if (s.timer <= 0) {
+        if (s.walking || simRnd() < 0.5) { s.walking = false; s.timer = 5 + simRnd() * 12; }
+        else {
+          const a = simRnd() * 6.28, r = simRnd() * roam;
+          s.tx = s.hx + Math.cos(a) * r; s.tz = s.hz + Math.sin(a) * r;
+          s.walking = true; s.timer = 14;
+        }
+      }
+      if (s.walking) {
+        const dx = s.tx - s.x, dz = s.tz - s.z, d = Math.hypot(dx, dz);
+        if (d < 0.6) { s.walking = false; s.timer = 4 + simRnd() * 8; }
+        else {
+          let dy = Math.atan2(dx, dz) - s.yaw;
+          dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+          s.yaw += dy * Math.min(1, dt * 1.6);
+          const sp = sp0 * dt * Math.max(0, Math.cos(dy));
+          const nx = s.x + Math.sin(s.yaw) * sp, nz = s.z + Math.cos(s.yaw) * sp;
+          if (renderHeight(nx, nz) > meta.waterLevel + 0.8 && sampleTrailAt(nx, nz) < 0.45) {
+            s.x = nx; s.z = nz;
+          } else {
+            s.timer = 0;
+          }
+        }
+      }
+      // Separate sheep from each other, cottage plinth, campfires, and nearby tree trunks.
+      for (let k = 0; k < raw.length; k++) {
+        if (k === i) continue;
+        const o = raw[k], ex = s.x - o.x, ez = s.z - o.z, d = Math.hypot(ex, ez);
+        const md = collide * 3.8 * Math.max(s.s, o.s);
+        if (d < md && d > 1e-4) { s.x += ex / d * (md - d) * 0.55; s.z += ez / d * (md - d) * 0.55; }
+      }
+      const chx = s.x - hcx, chz = s.z - hcz, chd = Math.hypot(chx, chz);
+      if (chd < 13.0 && chd > 1e-4) { s.x = hcx + chx / chd * 13.0; s.z = hcz + chz / chd * 13.0; }
+      for (const cf of campfires) {
+        const fx = s.x - cf.x, fz = s.z - cf.z, fd = Math.hypot(fx, fz);
+        if (fd < 3.5 && fd > 1e-4) { s.x = cf.x + fx / fd * 3.5; s.z = cf.z + fz / fd * 3.5; }
+      }
+      const targetGraze = s.walking ? 0.0 : (i % 3 === 0 ? 0.10 : (i % 3 === 1 ? 0.52 : 0.96));
+      s.graze += (targetGraze - s.graze) * Math.min(1, dt * 1.2);
+    }
+  }
+  // Final push out of any non-bush canonical tree trunk or water edge so no sheep ever clips or gets wet.
+  for (const s of raw) {
+    for (const ti of keep) {
+      if (kinds[ti] === 3) continue;
+      const tx = field(0, ti), tz = field(2, ti), ts = field(3, ti);
+      const tr = ts * 0.04 + collide * s.s + 0.6;
+      const ex = s.x - tx, ez = s.z - tz, d = Math.hypot(ex, ez);
+      if (d < tr && d > 1e-4) { s.x = tx + ex / d * tr; s.z = tz + ez / d * tr; }
+    }
+    const y = renderHeight(s.x, s.z);
+    const n = renderNormal(s.x, s.z, 1.0);
+    const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
+    const pitch = (n[0] * fx + n[2] * fz) * 0.8;
+    const roll = (n[0] * fz - n[2] * fx) * 0.8;
+    sheepList.push([
+      +s.x.toFixed(2), +(y - 0.04).toFixed(3), +s.z.toFixed(2),
+      +s.yaw.toFixed(4), +pitch.toFixed(4), +roll.toFixed(4),
+      +(s.s * s.sx).toFixed(3), +s.s.toFixed(3), +(s.s * s.sz).toFixed(3),
+      +s.graze.toFixed(3), s.walking ? 1 : 0, +s.phase.toFixed(3), s.coat,
+    ]);
+  }
+  console.log(`fauna: ${sheepList.length} sheep across ${herds.length} herds, ${campfires.length} campfires, chimney=[${chimneyPos.join(', ')}]`);
+
+  // W5 camera poses: sheep close-up (capture.js poi=sheep), pasture, meadow_birds, dawn, night, cottage_smoke.
+  const flock = sheepList.slice(0, 10);
+  let cxS = 0, czS = 0;
+  for (const sh of flock) { cxS += sh[0]; czS += sh[2]; }
+  cxS /= flock.length; czS /= flock.length;
+  let best = null, bd = -1e9;
+  for (let k = 0; k < 48; k++) {
+    const a = k / 48 * Math.PI * 2, x = cxS + Math.cos(a) * 12.2, z = czS + Math.sin(a) * 12.2;
+    const lookYaw = yawToward(x, z, cxS, czS);
+    const fvx = -Math.sin(lookYaw), fvz = -Math.cos(lookYaw);
+    let minSheep = 1e9, edgePenalty = 0, inFrame = 0;
+    for (const sh of sheepList) {
+      const dx = sh[0] - x, dz = sh[2] - z, dd = Math.hypot(dx, dz);
+      minSheep = Math.min(minSheep, dd);
+      if (dd < 65) {
+        const fwd = dx * fvx + dz * fvz;
+        if (fwd > 1.5) {
+          const ang = Math.abs(Math.atan2(Math.abs(dx * fvz - dz * fvx), fwd));
+          if (ang > 0.33 && ang < 0.80) edgePenalty += dd < 28 ? 22 : 14;
+          else if (ang <= 0.33 && dd < 30) inFrame++;
+        }
+      }
+    }
+    if (minSheep < 5.6) continue;
+    let md = 1e9;
+    for (const ti of keep) {
+      if (kinds[ti] === 3) continue;
+      const distT = Math.hypot(field(0, ti) - x, field(2, ti) - z) - field(3, ti) * 0.25;
+      if (distT < md) md = distT;
+    }
+    const scS = Math.min(md, 14) + Math.min(minSheep, 9) * 0.5 + inFrame * 2.2 - edgePenalty;
+    if (scS > bd) { bd = scS; best = [x, z, lookYaw]; }
+  }
+  if (!best) best = [cxS + 12.0, czS + 12.0, yawToward(cxS + 12.0, czS + 12.0, cxS, czS)];
+  webPoses.stops.sheep = makePose('sheep', best[0], best[1], best[2], -0.10);
+  const px0 = cxS - 11.5, pz0 = czS + 8.5;
+  webPoses.stops.pasture = makePose('pasture', px0, pz0, yawToward(px0, pz0, cxS, czS) - 0.08, -0.04);
+
+  // Dawn pose (shots.json dawn: trailf=0.2, yaw=1.8).
+  {
+    const dTarget = 0.2 * trailTotal;
+    let di = tDist.findIndex((x) => x >= dTarget);
+    if (di < 0) di = tPts.length - 1;
+    const p = tAt(di), q = tAt(di + 8);
+    webPoses.stops.dawn = makePose('dawn', p[0], p[1], yawToward(p[0], p[1], q[0], q[1]) + 1.8, 0.02);
+  }
+  // Night pose (shots.json night: trailf=0.06 looking up at moon + valley).
+  {
+    const dTarget = 0.06 * trailTotal;
+    let ni = tDist.findIndex((x) => x >= dTarget);
+    if (ni < 0) ni = tPts.length - 1;
+    const p = tAt(ni), q = tAt(ni + 8);
+    webPoses.stops.night = makePose('night', p[0], p[1], yawToward(p[0], p[1], q[0], q[1]), 0.14);
+  }
+  // Meadow birds & butterflies pose: open flower meadow looking gently across sky & wildflowers.
+  {
+    const dTarget = 0.12 * trailTotal;
+    let mi = tDist.findIndex((x) => x >= dTarget);
+    if (mi < 0) mi = tPts.length - 1;
+    const p = tAt(mi), q = tAt(mi + 8);
+    webPoses.stops.meadow = makePose('meadow', p[0], p[1], yawToward(p[0], p[1], q[0], q[1]) + 0.5, 0.08);
+  }
+  // Cottage smoke pose: pulled slightly back and pitched up to capture the rising chimney smoke plume + yard campfire.
+  {
+    const a = Math.atan2(hfx, hfz) + 0.42;
+    const csX = hcx + Math.sin(a) * 32.0, csZ = hcz + Math.cos(a) * 32.0;
+    webPoses.stops.cottage_smoke = makePose('cottage_smoke', csX, csZ, yawToward(csX, csZ, hcx, hcz), 0.18);
+  }
+}
+
+const fauna = {
+  sheep: sheepList,
+  chimney: chimneyPos,
+  campfires,
+};
+
 const undergrowth = {
   forestIdx: extras.forestIdx ?? 1451,
   ferns: { tileSize: 16, maxCount: 768, seed: 55, lowNear: 160, lowRadius: 32 },
@@ -1093,6 +1344,7 @@ const webMeta = {
   signpostTex: { file: 'signpost.pngdata', width: 512, height: 384, rows: 3 },
   props,
   undergrowth,
+  fauna,
   poses: webPoses,
   walk,
   sizes,

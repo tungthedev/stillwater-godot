@@ -26,6 +26,8 @@ var water_sys: Node
 var props_sys: Node
 var undergrowth_sys: Node
 var air_sys: Node
+var fauna_sys: Node
+var audio_sys: Node
 var post: Node
 var build_id := ""
 # In the game the readout and levers hide behind G / the pause sheet's Perf button (?debug shows
@@ -66,6 +68,8 @@ func setup(nodes: Dictionary) -> void:
 	props_sys = nodes.get("props", null)
 	undergrowth_sys = nodes.get("undergrowth", null)
 	air_sys = nodes.get("air", null)
+	fauna_sys = nodes.get("fauna", null)
+	audio_sys = nodes.get("audio", null)
 	post = nodes.post
 	build_id = nodes.build
 	game = nodes.get("game", false)
@@ -155,6 +159,8 @@ func _apply_dist_dens(rebuild_grass: bool) -> void:
 	if air_sys != null:
 		air_sys.set_dist_scale(d.radii)
 		air_sys.set_density(DENS[dens_i])
+	if fauna_sys != null:
+		fauna_sys.set_dist_scale(d.radii)
 	if rebuild_grass:
 		grass_sys.set_density(DENS[dens_i])
 
@@ -265,6 +271,11 @@ func settings() -> Dictionary:
 		"air": air_sys != null and air_sys.is_on(),
 		"air_tris": air_sys.last_tris if air_sys != null else 0,
 		"air_draws": air_sys.last_draws if air_sys != null else 0,
+		"fauna": fauna_sys != null and fauna_sys.is_on(),
+		"fauna_tris": fauna_sys.last_tris if fauna_sys != null else 0,
+		"fauna_draws": fauna_sys.last_draws if fauna_sys != null else 0,
+		"audio": audio_sys != null and audio_sys.is_on(),
+		"tod": env_sys.tod_preset,
 		"style": env_sys.style,
 		"ground": terrain_sys.ground_mode(),
 		"grass_mode": grass_sys.grass_mode(),

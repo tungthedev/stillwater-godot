@@ -46,15 +46,25 @@ void fragment() {
 	vec3 n = w_normalize(v_wn);
 	vec3 lit;
 
-	if (v_meta.x > 0.5) {
+	if (v_meta.x > 1.25) {
+		// Campfire embers & hearth coals: charred glowing bed by day, bright flickering firelight at dusk/night.
+		float pulse = 0.86 + 0.14 * sin(TIME * 6.5 + v_wpos.x * 5.0 + v_wpos.z * 4.3);
+		vec3 coal = vec3(0.18, 0.08, 0.05);
+		vec3 ember = vec3(1.45, 0.56, 0.14) * pulse * (0.45 + night_glow * 2.15);
+		float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.16, 0.50, v_meta.z);
+		vec3 direct = ramp * light_col * v_meta.y * coal / PI;
+		vec3 ind = w_indirect(n, coal);
+		lit = w_light_floor(direct + ind, coal) + ember;
+	} else if (v_meta.x > 0.5) {
 		// Window & lantern glass: cozy sky-tinted slate pane by day, honey-amber candlelight at dusk/night.
 		vec3 day_glass = vec3(0.22, 0.34, 0.50);
-		vec3 night_glass = vec3(0.95, 0.74, 0.42);
+		vec3 night_glass = vec3(0.98, 0.78, 0.44);
 		vec3 gcol = mix(day_glass, night_glass, night_glow);
 		float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.16, 0.50, v_meta.z);
 		vec3 direct = ramp * light_col * v_meta.y * gcol / PI;
 		vec3 ind = w_indirect(n, gcol);
-		vec3 emis = vec3(1.0, 0.62, 0.20) * (0.04 + night_glow * 1.15);
+		float flick = 0.94 + 0.06 * sin(TIME * 3.8 + v_wpos.x * 2.1 + v_wpos.z * 1.7);
+		vec3 emis = vec3(1.15, 0.68, 0.22) * flick * (0.04 + night_glow * 1.75);
 		lit = w_light_floor(direct + ind, gcol) + emis;
 	} else {
 		// Matte painted surface with 1 cheap world-space brushstroke variation fetch.

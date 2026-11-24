@@ -38,9 +38,9 @@ vec4 cirrus(vec3 dir, vec3 cam) {
 	float macro = smoothstep(0.38, 0.72, n1.r);
 	float a = smoothstep(0.50, 0.76, wisp) * macro * 0.22 * smoothstep(0.06, 0.26, dir.y) * (1.0 - smoothstep(0.76, 0.98, dir.y) * 0.42);
 	if (a < 0.004) return vec4(0.0);
-	float mu = dot(normalize(dir), sun_dir);
-	vec3 c = w_sky(vec3(0.0, 1.0, 0.0)) * 0.75 + light_col * (0.28 + pow(max(mu, 0.0), 5.0) * 0.75);
-	return vec4(c, a);
+	float mu = dot(w_normalize(dir), sun_dir);
+	vec3 c = w_sky(vec3(0.0, 1.0, 0.0)) * 0.75 + light_col * (0.28 + pow(max(mu, 0.0), 5.0) * 0.75 * sun_disc_vis);
+	return vec4(c, a * mix(1.0, 0.38, night_weight));
 }
 
 // Painted cumulus layer in the sky shader: 2 noise_tex fetches on the shared w_cloud_shadow field
@@ -104,19 +104,73 @@ vec4 cumulus(vec3 dir) {
 	return vec4(col, alpha);
 }
 
+// Crisp painted starfield + subtle Milky Way band above the horizon (night_weight > 0).
+vec3 night_stars(vec3 dir) {
+	if (dir.y <= 0.03) return vec3(0.0);
+	vec3 d = w_normalize(dir);
+	float az = abs(d.x) + abs(d.z) > 1e-6 ? atan(d.z, d.x) : 0.0;
+	float el = asin(clamp(d.y, -1.0, 1.0));
+	// Two angular star grids so bright hero stars and fine dust read crisply without aliasing.
+	vec2 g1 = vec2(az * 28.0, el * 28.0);
+	vec2 id1 = floor(g1);
+	vec2 f1 = fract(g1) - 0.5;
+	float r1 = n_hash12(id1 + vec2(11.3, 7.1));
+	vec2 off1 = (vec2(n_hash12(id1 + vec2(3.7, 19.1)), n_hash12(id1 + vec2(27.5, 5.3))) - 0.5) * 0.55;
+	float d1 = length(f1 - off1);
+	float s1 = smoothstep(0.86, 0.995, r1) * w_rstep(0.14, 0.02, d1);
+	float tw1 = 0.72 + 0.28 * sin(TIME * (1.8 + r1 * 2.4) + r1 * 43.0);
+
+	vec2 g2 = vec2(az * 58.0, el * 58.0);
+	vec2 id2 = floor(g2);
+	vec2 f2 = fract(g2) - 0.5;
+	float r2 = n_hash12(id2 + vec2(53.1, 17.7));
+	vec2 off2 = (vec2(n_hash12(id2 + vec2(9.2, 41.3)), n_hash12(id2 + vec2(61.4, 2.9))) - 0.5) * 0.50;
+	float d2 = length(f2 - off2);
+	float s2 = smoothstep(0.90, 0.998, r2) * w_rstep(0.12, 0.02, d2);
+
+	vec3 star_tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0, 0.93, 0.82), n_hash12(id1 + vec2(1.9, 8.4)));
+	float elev_k = smoothstep(0.05, 0.30, d.y);
+	// Soft Milky Way glow band tilted across the dome.
+	float mw = exp(-abs(dot(d, w_normalize(vec3(0.42, -0.58, 0.70)))) * 6.5) * elev_k;
+	vec3 mw_col = vec3(0.055, 0.085, 0.175) * mw;
+	return (star_tint * (s1 * tw1 * 2.4 + s2 * 1.15) * elev_k + mw_col) * night_weight;
+}
+
 void sky() {
-	vec3 dir = EYEDIR;
+	vec3 dir = w_normalize(EYEDIR);
 	vec3 col = w_sky_base(dir);
-	float mu = dot(dir, sun_dir);
-	float sun_r = 0.02;
-	float sd = acos(clamp(mu, -1.0, 1.0));
-	if (sd < sun_r * 2.2) {
-		float x = clamp(sd / sun_r, 0.0, 1.0);
-		float limb = 1.0 - 0.55 * (1.0 - sqrt(1.0 - x * x));
-		float disc = w_rstep(1.18, 0.72, sd / sun_r);
-		col += sun_col * disc * limb * 24.0;
+	if (sun_disc_vis > 0.001) {
+		float mu = dot(dir, sun_dir);
+		float sun_r = 0.02;
+		float sd = acos(clamp(mu, -1.0, 1.0));
+		if (sd < sun_r * 2.2) {
+			float x = clamp(sd / sun_r, 0.0, 1.0);
+			float limb = 1.0 - 0.55 * (1.0 - sqrt(max(1.0 - x * x, 0.0)));
+			float disc = w_rstep(1.18, 0.72, sd / sun_r);
+			col += sun_col * disc * limb * 24.0 * sun_disc_vis;
+		}
+		col += (sun_col * pow(max(mu, 0.0), 140.0) * 0.78 + sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45) * sun_disc_vis;
 	}
-	col += sun_col * pow(max(mu, 0.0), 140.0) * 0.78 + sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
+	if (night_weight > 0.01) {
+		col += night_stars(dir);
+	}
+	if (moon_vis > 0.01) {
+		vec3 md = w_normalize(moon_dir);
+		float mu_m = dot(dir, md);
+		float moon_r = 0.026;
+		float md_ang = acos(clamp(mu_m, -1.0, 1.0));
+		if (md_ang < moon_r * 2.2) {
+			float x = clamp(md_ang / moon_r, 0.0, 1.0);
+			float limb = 0.78 + 0.22 * sqrt(max(1.0 - x * x, 0.0));
+			float disc = w_rstep(1.12, 0.80, md_ang / moon_r);
+			// Subtle painted maria mottling across the luminous silver-cream moon disc.
+			float mare = 0.86 + 0.14 * sin(dir.x * 90.0 + dir.y * 65.0) * cos(dir.z * 80.0 - dir.y * 55.0);
+			col += vec3(1.85, 1.92, 2.15) * disc * limb * mare * moon_vis;
+		}
+		float halo1 = pow(max(mu_m, 0.0), 64.0) * 0.42;
+		float halo2 = pow(max(mu_m, 0.0), 10.0) * 0.16;
+		col += vec3(0.55, 0.72, 1.05) * (halo1 + halo2) * moon_vis;
+	}
 	if (cirrus_on > 0.5) {
 		vec4 ci = cirrus(dir, POSITION);
 		col = mix(col, ci.rgb, ci.a);

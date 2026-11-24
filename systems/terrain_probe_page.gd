@@ -49,8 +49,10 @@ const VARIANTS: Array[Dictionary] = [
 	{"name": "CONTROL NaN, other post", "bits": NAN_POW, "post": "alt", "control": true},
 	{"name": "baked ground (this build)", "bits": 0, "baked": true},
 	{"name": "baked ground, other post", "bits": 0, "post": "alt", "baked": true},
+	{"name": "night baked ground", "bits": 0, "baked": true, "tod": "night"},
 	{"name": "baked ground, albedo only", "bits": OUT_ALBEDO | NO_ATM, "baked": true},
 	{"name": "default live (this build)", "bits": 0},
+	{"name": "night live ground", "bits": 0, "tod": "night"},
 	{"name": "OLD trail pow(neg, 2)", "bits": LEGACY_POW},
 	{"name": "OLD trail pow, guards off", "bits": LEGACY_POW | NO_GUARD},
 	{"name": "OLD reversed smoothsteps", "bits": LEGACY_RSTEP},
@@ -218,10 +220,9 @@ func _bake(which: String) -> Dictionary:
 	return baked
 
 
-func _set_style(classic: bool) -> void:
-	_env.painterly = not classic
-	_env.hemi_sky = _env.HEMI_SKY if classic else _env.PAINTERLY_HEMI_SKY
-	_env.hemi_ground = _env.HEMI_GROUND if classic else _env.PAINTERLY_HEMI_GROUND
+func _set_style(classic: bool, tod_name: String = "noon") -> void:
+	_env.set_tod(tod_name)
+	_env.set_style("classic" if classic else "painterly")
 	_terrain.set_painterly(not classic)
 	for m in _terrain.materials():
 		_env.apply_to(m)
@@ -252,7 +253,7 @@ func _run() -> void:
 				row.baked = await _bake(bake)
 		_vp.use_hdr_2d = post
 		_env.set_post(post)
-		_set_style(row.classic)
+		_set_style(row.classic, str(v.get("tod", "noon")))
 		_terrain.set_live(not use_baked_row)
 		if use_baked_row:
 			_terrain.baked_mat.set_shader_parameter("dbg_terrain", row.bits)

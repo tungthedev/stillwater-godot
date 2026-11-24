@@ -10,8 +10,10 @@ const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
 
 var add_mat: ShaderMaterial
 var mul_mat: ShaderMaterial
+var player_pool_mat: ShaderMaterial
 var _light_swap: RefCounted
 var _shadow_swap: RefCounted
+var _player_pool_mi: MeshInstance3D
 var _lights: Array[Dictionary] = []
 var _shadows: Array[Dictionary] = []
 var _light_mesh: ArrayMesh
@@ -19,6 +21,8 @@ var _shadow_mesh: ArrayMesh
 var _intensity := 0.0
 var _shadows_on := false
 var _lights_enabled := false
+var _player_lamp_forced := false
+var _player_pool_vis := false
 var _on := true
 
 var last_draws := 0
@@ -32,6 +36,13 @@ func _ready() -> void:
 	add_mat.shader = load("res://shaders/fake_light_add.gdshader")
 	add_mat.render_priority = 2
 	add_mat.set_shader_parameter("global_intensity", _intensity)
+	add_mat.set_shader_parameter("single_light", Vector4(1.0, 0.72, 0.34, 0.0))
+
+	player_pool_mat = ShaderMaterial.new()
+	player_pool_mat.shader = load("res://shaders/fake_light_add.gdshader")
+	player_pool_mat.render_priority = 2
+	player_pool_mat.set_shader_parameter("global_intensity", 1.0)
+	player_pool_mat.set_shader_parameter("single_light", Vector4(1.0, 0.72, 0.36, 0.42))
 
 	mul_mat = ShaderMaterial.new()
 	mul_mat.shader = load("res://shaders/fake_shadow_mul.gdshader")
@@ -43,18 +54,30 @@ func _ready() -> void:
 	_shadow_mesh = _build_disc_mesh()
 	_shadow_mesh.surface_set_material(0, mul_mat)
 
+	var pmesh := _build_sphere_mesh(1)
+	pmesh.surface_set_material(0, player_pool_mat)
+	_player_pool_mi = MeshInstance3D.new()
+	_player_pool_mi.name = "player_warmth_pool"
+	_player_pool_mi.mesh = pmesh
+	_player_pool_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_player_pool_mi.visible = false
+	add_child(_player_pool_mi)
+
 
 func materials() -> Array[ShaderMaterial]:
 	var out: Array[ShaderMaterial] = []
 	if add_mat != null:
 		out.append(add_mat)
+	if player_pool_mat != null:
+		out.append(player_pool_mat)
 	if mul_mat != null:
 		out.append(mul_mat)
 	return out
 
 
-func add_light(pos: Vector3, radius: float, color: Color, intensity: float = 1.0) -> void:
-	_lights.append({"pos": pos, "r": radius, "col": color, "i": intensity})
+func add_light(pos: Vector3, radius: float, color: Color, intensity: float = 1.0, radius_y: float = -1.0) -> void:
+	var ry := radius if radius_y <= 0.0 else radius_y
+	_lights.append({"pos": pos, "r": radius, "ry": ry, "col": color, "i": intensity})
 
 
 func add_shadow(pos: Vector3, radius_xz: Vector2, strength: float = 0.45, tint: Color = Color(0.48, 0.52, 0.72)) -> void:
@@ -71,13 +94,14 @@ func rebuild() -> void:
 			var L: Dictionary = _lights[i]
 			var p: Vector3 = L.pos
 			var r: float = float(L.r)
+			var ry: float = float(L.get("ry", r))
 			var c: Color = L.col
 			var o := i * 16
 			buf[o + 0] = r; buf[o + 1] = 0.0; buf[o + 2] = 0.0; buf[o + 3] = p.x
-			buf[o + 4] = 0.0; buf[o + 5] = r; buf[o + 6] = 0.0; buf[o + 7] = p.y
+			buf[o + 4] = 0.0; buf[o + 5] = ry; buf[o + 6] = 0.0; buf[o + 7] = p.y
 			buf[o + 8] = 0.0; buf[o + 9] = 0.0; buf[o + 10] = r; buf[o + 11] = p.z
 			buf[o + 12] = c.r; buf[o + 13] = c.g; buf[o + 14] = c.b; buf[o + 15] = float(L.i)
-			aabb = aabb.merge(AABB(p - Vector3(r, r, r), Vector3(r * 2.0, r * 2.0, r * 2.0)))
+			aabb = aabb.merge(AABB(p - Vector3(r, ry, r), Vector3(r * 2.0, ry * 2.0, r * 2.0)))
 		if _light_swap == null:
 			_light_swap = SwapMultiMesh.new(self, _light_mesh, cap, aabb)
 		_light_swap.push(buf, _lights.size())
@@ -111,6 +135,32 @@ func set_intensity(v: float) -> void:
 	_sync_visibility()
 
 
+func set_player_lamp(on: bool) -> void:
+	_player_lamp_forced = on
+	_sync_visibility()
+
+
+func is_player_lamp_on() -> bool:
+	return _player_lamp_forced
+
+
+func update_player_pool(cam: Camera3D, ground_y: float) -> void:
+	if _player_pool_mi == null or not _player_pool_vis or cam == null:
+		return
+	var fwd := -cam.global_basis.z
+	var flat_fwd := Vector3(fwd.x, 0.0, fwd.z)
+	if flat_fwd.length_squared() < 1e-4:
+		flat_fwd = Vector3.FORWARD
+	else:
+		flat_fwd = flat_fwd.normalized()
+	# Sit 4.2 m ahead of camera with radius 2.6 m so the camera stays cleanly outside the front dome.
+	var p := cam.global_position + flat_fwd * 4.2
+	p.y = ground_y + 0.55
+	_player_pool_mi.global_transform = Transform3D(Basis.from_scale(Vector3(2.8, 1.6, 2.8)), p)
+	var strength := 0.52 if _player_lamp_forced else clampf((_intensity - 0.35) * 0.55, 0.0, 0.36)
+	player_pool_mat.set_shader_parameter("single_light", Vector4(1.0, 0.72, 0.36, strength))
+
+
 func set_shadows_on(v: bool) -> void:
 	_shadows_on = v
 	_sync_visibility()
@@ -124,12 +174,17 @@ func set_on(v: bool) -> void:
 func _sync_visibility() -> void:
 	var l_vis := _on and _lights_enabled and _light_swap != null and not _lights.is_empty()
 	var s_vis := _on and _shadows_on and _shadow_swap != null and not _shadows.is_empty()
+	_player_pool_vis = _on and (_player_lamp_forced or _intensity > 0.40) and _player_pool_mi != null
 	if _light_swap != null:
 		_light_swap.set_visible(l_vis)
 	if _shadow_swap != null:
 		_shadow_swap.set_visible(s_vis)
-	last_draws = (1 if l_vis else 0) + (1 if s_vis else 0)
-	last_tris = (_lights.size() * _light_tris if l_vis else 0) + (_shadows.size() * _shadow_tris if s_vis else 0)
+	if _player_pool_mi != null:
+		_player_pool_mi.visible = _player_pool_vis
+	last_draws = (1 if l_vis else 0) + (1 if s_vis else 0) + (1 if _player_pool_vis else 0)
+	last_tris = (_lights.size() * _light_tris if l_vis else 0) \
+		+ (_shadows.size() * _shadow_tris if s_vis else 0) \
+		+ (_light_tris if _player_pool_vis else 0)
 
 
 func _build_sphere_mesh(subdiv: int) -> ArrayMesh:

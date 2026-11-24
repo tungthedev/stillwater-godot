@@ -160,6 +160,11 @@ func _process(_delta: float) -> void:
 		var cam := get_viewport().get_camera_3d()
 		if cam != null:
 			update_cull(cam, false)
+			if fake_lights != null and fake_lights._player_pool_vis:
+				var gp := cam.global_position
+				var fwd := -cam.global_basis.z
+				var gy := float(world.height_near(gp.x + fwd.x * 4.2, gp.z + fwd.z * 4.2))
+				fake_lights.update_player_pool(cam, gy)
 	prof_us = Time.get_ticks_usec() - t0
 
 
@@ -938,7 +943,32 @@ func _build_cottage_and_yard() -> void:
 			mb.ico(bp + Vector3(bs * 0.38, bs * 0.34, bs * 0.22), Vector3(bs * 0.62, bs * 0.48, bs * 0.62), bcol * Color(1.08, 1.06, 0.92), 0.98)
 			mb.ico(bp + Vector3(-bs * 0.32, bs * 0.36, -bs * 0.26), Vector3(bs * 0.58, bs * 0.46, bs * 0.58), bcol * Color(0.88, 0.96, 1.04), 0.94)
 
+	# Cozy stone-ring cottage campfire (merged into cottage static mesh: 0 extra draw calls).
+	var finfo: Dictionary = world.fauna_info()
+	if finfo.has("campfires"):
+		for cf in finfo.campfires:
+			if str(cf.get("name", "")) == "cottage":
+				_add_campfire_geo(mb, Vector3(float(cf.x), float(cf.y), float(cf.z)), float(cf.r))
+
 	_add_static_mesh("cottage", mb.finish(prop_mat), mb.aabb, mb.tri_count, 1800.0)
+
+
+func _add_campfire_geo(mb: _MB, center: Vector3, rad: float) -> void:
+	var ring_stone := Color(0.50, 0.46, 0.42)
+	var log_col := Color(0.26, 0.16, 0.10)
+	var ember_col := Color(0.95, 0.42, 0.12)
+	# Ring of 8 rounded hearth stones seated slightly into ground.
+	for i in 8:
+		var a := float(i) / 8.0 * TAU
+		var sp := center + Vector3(cos(a) * rad, 0.08, sin(a) * rad)
+		mb.ico(sp, Vector3(0.24, 0.16, 0.22), ring_stone * (0.90 + 0.16 * float(i % 2)), 0.92)
+	# Crossed firewood logs.
+	for i in 3:
+		var a := float(i) * (PI / 3.0) + 0.25
+		mb.cyl(0.08, 0.10, rad * 1.45, 6, center + Vector3(0.0, 0.18, 0.0), Vector3(0.28, a, PI * 0.5 - 0.15), log_col, 0.88)
+	# Glowing ember bed + flame core (UV.x = 1.5 -> flickering hearth ember in prop_painted.gdshader).
+	mb.box(Vector3(rad * 0.85, 0.14, rad * 0.85), center + Vector3(0.0, 0.08, 0.0), Vector3(0.0, 0.4, 0.0), ember_col, 1.0, 1.5)
+	mb.box(Vector3(rad * 0.42, 0.34, rad * 0.42), center + Vector3(0.0, 0.22, 0.0), Vector3(0.15, 0.9, -0.12), ember_col, 1.0, 1.5)
 
 
 # ---------- 4. Trailhead Signpost (1 opaque draw call, crisp 3-board lettering) ----------
@@ -1095,6 +1125,13 @@ func _build_lake_props() -> void:
 		mb.cyl(0.20, 0.30, log_len, 8, Vector3.ZERO, Vector3.ZERO, Color(0.36, 0.27, 0.19), 0.90)
 		mb.xf = Transform3D.IDENTITY
 
+	# Lakeside campfire merged into lake_pier_boat static mesh (0 extra draw calls).
+	var finfo_l: Dictionary = world.fauna_info()
+	if finfo_l.has("campfires"):
+		for cf in finfo_l.campfires:
+			if str(cf.get("name", "")) == "lake":
+				_add_campfire_geo(mb, Vector3(float(cf.x), float(cf.y), float(cf.z)), float(cf.r))
+
 	_add_static_mesh("lake_pier_boat", mb.finish(prop_mat), mb.aabb, mb.tri_count, 900.0)
 
 
@@ -1225,20 +1262,39 @@ func _build_fake_lights() -> void:
 
 	var warm_win := Color(1.0, 0.68, 0.28)
 	var warm_lan := Color(1.0, 0.62, 0.22)
+	var warm_spill := Color(1.0, 0.64, 0.24)
+	var warm_fire := Color(1.0, 0.46, 0.14)
 	for gp in _cottage_glows:
 		var is_lan := gp.distance_squared_to(_cottage_lantern) < 0.01
-		fake_lights.add_light(gp, 2.6 if is_lan else 2.2, warm_lan if is_lan else warm_win, 1.15 if is_lan else 0.85)
+		fake_lights.add_light(gp, 2.5 if is_lan else 1.55, warm_lan if is_lan else warm_win, 1.18 if is_lan else 0.62)
 
 	var pinfo: Dictionary = world.props_info()
+	# Broad warm ground spill dome across the cottage front porch & yard flagstones.
+	if pinfo.has("house"):
+		var H: Dictionary = pinfo.house
+		var hfx := float(H.front[0])
+		var hfz := float(H.front[1])
+		var sx := float(H.x) + hfx * 6.5
+		var sz := float(H.z) + hfz * 6.5
+		var sy := float(world.height(sx, sz))
+		fake_lights.add_light(Vector3(sx, sy + 0.5, sz), 6.2, warm_spill, 0.55, 2.6)
 	if pinfo.has("lanterns"):
 		for L in pinfo.lanterns:
 			var gx := float(L[0]) + float(L[3]) * 0.45
 			var gy := float(L[1]) + 1.54
 			var gz := float(L[2]) + float(L[4]) * 0.45
-			fake_lights.add_light(Vector3(gx, gy, gz), 2.5, warm_lan, 1.0)
+			fake_lights.add_light(Vector3(gx, gy, gz), 2.5, warm_lan, 1.05)
+			fake_lights.add_light(Vector3(gx, float(L[1]) + 0.3, gz), 4.6, warm_spill, 0.42, 2.0)
 	if pinfo.has("pier") and pinfo.pier != null:
 		var lan: Array = pinfo.pier.lantern
-		fake_lights.add_light(Vector3(float(lan[3]), float(lan[4]), float(lan[5])), 2.8, warm_lan, 1.0)
+		fake_lights.add_light(Vector3(float(lan[3]), float(lan[4]), float(lan[5])), 3.0, warm_lan, 1.10)
+	# Campfire flickering flame core + wide warm hearth spill pool.
+	var finfo: Dictionary = world.fauna_info()
+	if finfo.has("campfires"):
+		for cf in finfo.campfires:
+			var cp := Vector3(float(cf.x), float(cf.y), float(cf.z))
+			fake_lights.add_light(cp + Vector3(0.0, 0.55, 0.0), 1.4, warm_fire, 1.85, 1.6)
+			fake_lights.add_light(cp + Vector3(0.0, 0.45, 0.0), 6.0, warm_spill, 0.65, 2.6)
 
 	# Soft multiplicative contact shadow pools for benches & wishing well (ready for W5 or ?fakelights).
 	for b in benches:

@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "w4-2"
+const BUILD := "w5-1"
 
 
 func _ready() -> void:
@@ -87,13 +87,31 @@ func _ready() -> void:
 		env_sys.apply_to(m)
 	if Flags.has("noair") or Flags.has("no-air"):
 		air_sys.set_on(false)
+	var fauna_sys := _add(scene, "fauna", world)
+	for m in fauna_sys.materials():
+		env_sys.apply_to(m)
+	if Flags.has("nofauna") or Flags.has("no-fauna"):
+		fauna_sys.set_on(false)
+	# Wire time-of-day listeners so preset switches & diurnal cycle drive night glow and fauna.
+	if not Flags.has("fakelights"):
+		env_sys.add_tod_listener(func(e: Node) -> void: props_sys.set_night_glow(e.night_glow))
+	env_sys.add_tod_listener(fauna_sys.apply_tod)
 	var cam := Camera3D.new()
 	cam.name = "camera"
 	cam.set_script(load("res://systems/walk_camera.gd"))
 	cam.setup(world)
 	scene.add_child(cam)
 	# The game is the default page; bench, pose and shot pages keep the fixed camera poses.
-	var game := not (Flags.has("bench") or Flags.has("pose") or Flags.has("shot") or Flags.has("bench-shot"))
+	var game := not (Flags.has("bench") or Flags.has("pose") or Flags.has("shot") or Flags.has("bench-shot") or Flags.has("capture"))
+	# Slow diurnal cycle runs in normal play unless a fixed ?tod= or ?time= was requested.
+	env_sys.set_cycle_enabled(game and Flags.value("tod") == "" and Flags.value("time") == "")
+	var audio_sys := Node.new()
+	audio_sys.name = "audio"
+	audio_sys.set_script(load("res://systems/audio.gd"))
+	audio_sys.setup(world, env_sys, game)
+	add_child(audio_sys)
+	if Flags.has("noaudio") or Flags.has("no-audio"):
+		audio_sys.set_on(false)
 	var is_sweep := Flags.value("bench").to_lower() == "sweep"
 	var ui := CanvasLayer.new()
 	var bench_sys := Node.new()
@@ -113,16 +131,16 @@ func _ready() -> void:
 		bench_sys.reported = true
 	ui.name = "ui"
 	ui.set_script(load("res://systems/ui.gd"))
-	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "sweep": sweep_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "post": post, "build": BUILD, "game": game})
+	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "sweep": sweep_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "fauna": fauna_sys, "audio": audio_sys, "post": post, "build": BUILD, "game": game})
 	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
-	bench_sys.profiled = {"terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
+	bench_sys.profiled = {"terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "fauna": fauna_sys, "audio": audio_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
 	if sweep_sys != null:
-		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "ui": ui, "bench": bench_sys, "settings": ui.settings, "profiled": bench_sys.profiled})
+		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "fauna": fauna_sys, "audio": audio_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "ui": ui, "bench": bench_sys, "settings": ui.settings, "profiled": bench_sys.profiled})
 	add_child(ui)
 	if game:
-		_add_game(world, scene, cam, bench_sys, ui, env_sys, props_sys)
-	print("BUILD %s game=%s style=%s ground=%s grass_mode=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s water=%s water_tris=%d props=%s props_rocks=%d undergrowth=%s air=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
-		BUILD, "on" if game else "off", env_sys.style, terrain_sys.ground_mode(), grass_sys.grass_mode(), t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", "on" if water_sys.is_on() else "off", water_sys.last_tris, "on" if props_sys.is_on() else "off", props_sys.total_rocks, "on" if undergrowth_sys.is_on() else "off", "on" if air_sys.is_on() else "off", cam.mode(),
+		_add_game(world, scene, cam, bench_sys, ui, env_sys, props_sys, fauna_sys, audio_sys)
+	print("BUILD %s game=%s style=%s tod=%s ground=%s grass_mode=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s water=%s water_tris=%d props=%s props_rocks=%d undergrowth=%s air=%s fauna=%s audio=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
+		BUILD, "on" if game else "off", env_sys.style, env_sys.tod_preset, terrain_sys.ground_mode(), grass_sys.grass_mode(), t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", "on" if water_sys.is_on() else "off", water_sys.last_tris, "on" if props_sys.is_on() else "off", props_sys.total_rocks, "on" if undergrowth_sys.is_on() else "off", "on" if air_sys.is_on() else "off", "on" if fauna_sys.is_on() else "off", "on" if audio_sys.is_on() else "off", cam.mode(),
 		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
 		clouds_sys.puffs, clouds_sys.tris, Flags.gpu_name()])
 	var bench_shot := Flags.value("bench-shot")
@@ -135,7 +153,7 @@ func _ready() -> void:
 
 # Input, walker, HUD and session. Created only on the game page, so ?bench and ?pose run exactly
 # the systems they ran before.
-func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: Node, ui: CanvasLayer, env_sys: Node, props_sys: Node = null) -> void:
+func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: Node, ui: CanvasLayer, env_sys: Node, props_sys: Node = null, fauna_sys: Node = null, audio_sys: Node = null) -> void:
 	var input := Node.new()
 	input.name = "input"
 	input.set_script(load("res://systems/game_input.gd"))
@@ -146,6 +164,8 @@ func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: 
 	player.setup(world, input, cam)
 	if props_sys != null:
 		player.colliders.append(props_sys.collide)
+	if fauna_sys != null:
+		player.colliders.append(fauna_sys.collide)
 	scene.add_child(player)
 	var hud := CanvasLayer.new()
 	hud.name = "hud"
@@ -157,7 +177,7 @@ func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: 
 	session.name = "session"
 	session.set_script(load("res://systems/session.gd"))
 	session.setup({"world": world, "input": input, "player": player, "hud": hud, "cam": cam, "walk_cam": cam,
-		"bench": bench_sys, "dev_toggle": ui.toggle_dev, "hours": env_sys.HOURS})
+		"bench": bench_sys, "dev_toggle": ui.toggle_dev, "hours": env_sys.hours, "env": env_sys, "audio": audio_sys, "props": props_sys})
 	if props_sys != null:
 		for b in props_sys.benches:
 			session.interactables.append(b)

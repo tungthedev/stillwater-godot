@@ -31,6 +31,9 @@ var cam: Camera3D
 var walk_cam: Node
 var bench_sys: Node
 var dev_toggle: Callable
+var env_sys: Node
+var audio_sys: Node
+var props_sys: Node
 
 var mode := "title"
 var paused := false
@@ -61,6 +64,9 @@ func setup(nodes: Dictionary) -> void:
 	walk_cam = nodes.walk_cam
 	bench_sys = nodes.bench
 	dev_toggle = nodes.dev_toggle
+	env_sys = nodes.get("env")
+	audio_sys = nodes.get("audio")
+	props_sys = nodes.get("props")
 	pois = world.meta.game.pois
 	hours = nodes.hours
 
@@ -80,6 +86,10 @@ func _ready() -> void:
 		hud.set_prompt("")
 		if on:
 			hud.toast("You sit. The day moves on without you." if bench else "You sit in the grass for a while."))
+	if audio_sys != null:
+		player.step.connect(func(spd: float) -> void:
+			audio_sys.on_step(player.pos, player.last_y if not is_nan(player.last_y) else world.height(player.pos.x, player.pos.y), spd))
+		hud.set_sound_muted(audio_sys.is_muted())
 	player.place_at_start()
 	_sync_input()
 	hud.show_title()
@@ -97,6 +107,8 @@ func _can_lock() -> bool:
 func start_game() -> void:
 	if mode != "title":
 		return
+	if audio_sys != null:
+		audio_sys.unlock()
 	mode = "transition"
 	_sync_input()
 	fade_target = 0.0
@@ -134,6 +146,26 @@ func _on_action(a: String) -> void:
 				hud.toggle_hud()
 		"dev":
 			dev_toggle.call()
+		"toggleMute":
+			if audio_sys != null:
+				var m: bool = audio_sys.toggle_mute()
+				hud.set_sound_muted(m)
+				if mode == "play":
+					hud.toast("Sound off" if m else "Sound on")
+		"toggleLamp":
+			if props_sys != null and props_sys.fake_lights != null:
+				var on: bool = not props_sys.fake_lights.is_player_lamp_on()
+				props_sys.fake_lights.set_player_lamp(on)
+				if mode == "play":
+					hud.toast("Lantern on" if on else "Lantern off")
+		"timeBack":
+			if env_sys != null:
+				env_sys.step_hours(-0.5)
+				hours = env_sys.hours
+		"timeForward":
+			if env_sys != null:
+				env_sys.step_hours(0.5)
+				hours = env_sys.hours
 
 
 # A click on the play surface (no control took it) asks for the pointer lock again.
@@ -205,6 +237,9 @@ func _tick(delta: float) -> void:
 		if _poi_t >= 0.25:
 			_poi_t = 0.0
 			_check_pois()
+	if env_sys != null:
+		env_sys.set_hurry(mode == "play" and not paused and input.is_held("hurryTime"))
+		hours = env_sys.hours
 	var p: Vector2 = player.pos
 	var alt: float = player.last_y if not is_nan(player.last_y) else world.height(cam.position.x, cam.position.z)
 	var is_sitting: bool = not player.sitting.is_empty()

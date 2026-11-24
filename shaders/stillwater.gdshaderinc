@@ -1,11 +1,12 @@
-// Shared pieces of Stillwater's look (src/glsl/common.js, src/post.js), fixed at hour 16.
-// Terrain and sky do their own lighting and grading because Godot's tonemappers cannot reproduce
-// Stillwater's stylTone curve. The environment runs a linear tonemapper with exposure 1, and the
-// Compatibility renderer writes these unshaded/sky outputs to the screen unconverted, so they end
-// with Stillwater's own sRGB encode.
+// Shared pieces of Stillwater's look (src/glsl/common.js, src/post.js), driven by time-of-day
+// uniforms from systems/environment.gd. Terrain and sky do their own lighting and grading because
+// Godot's tonemappers cannot reproduce Stillwater's stylTone curve. The environment runs a linear
+// tonemapper with exposure 1, and the Compatibility renderer writes these unshaded/sky outputs to
+// the screen unconverted, so they end with Stillwater's own sRGB encode.
 //
-// Terms that Stillwater weights by golden hour, dawn, dusk, night or alpenglow are left out:
-// at hour 16 every one of those weights is exactly 0.
+// Noon (hour 16.0) keeps sky_analytic = 0.0 and uses the prebaked sky_lut_16h.rgbh identically;
+// other presets (golden, dawn, dusk, night, mist) blend to a cheap Genshin-style analytic sky ramp
+// so time-of-day switches cost uniforms only (zero LUT or radiance-map rebuilds).
 
 uniform sampler2D sky_lut : filter_linear, repeat_disable;
 // Trilinear, not anisotropic: Stillwater's reference frames show the mip-blurred pattern at distance.
@@ -18,12 +19,29 @@ uniform float exposure = 0.6;
 uniform float post_on = 0.0;
 // 1: painterly look; 0: classic port of Stillwater (?style=classic). Set by environment.gd.
 uniform float painterly = 1.0;
-// Sky and horizon styling, set from environment.gd so a time of day can drive them.
+// Sky and horizon styling, set explicitly from environment.gd on every material including sky_mat.
 uniform vec3 horizon_tint = vec3(0.95, 0.99, 1.07);
 uniform float sky_sat = 1.38;
 uniform float horizon_haze = 0.34;
-// Stillwater's grade at hour 16 (env.js grade, post.js vignette). Constants rather than uniforms:
-// Godot leaves sky-shader uniform defaults unset (zero) in this renderer.
+// Time-of-day analytic sky & celestial controls (0 at noon so sky_lut_16h stays exact).
+uniform float sky_analytic = 0.0;
+uniform vec3 sky_zenith_col = vec3(0.18, 0.42, 0.92);
+uniform vec3 sky_mid_col = vec3(0.45, 0.68, 1.05);
+uniform vec3 sky_horizon_col = vec3(0.95, 1.02, 1.14);
+uniform vec3 sky_glow_col = vec3(0.65, 0.52, 0.35);
+uniform float sun_disc_vis = 1.0;
+uniform float night_weight = 0.0;
+uniform float moon_vis = 0.0;
+uniform vec3 moon_dir = vec3(0.46, 0.44, -0.77);
+// Time-of-day grade controls (explicitly set by environment.gd & mirrored to post_composite.gdshader).
+uniform vec3 grade_wb = vec3(1.0, 1.0, 1.0);
+uniform vec3 grade_shadow_tint = vec3(0.88, 0.90, 1.20);
+uniform vec3 grade_shadow_cast = vec3(0.93, 0.92, 1.14);
+uniform vec3 grade_lift_u = vec3(0.006, 0.006, 0.016);
+uniform float grade_sat_u = 1.12;
+uniform float grade_contrast_u = 0.08;
+uniform float day_fresh_k = 1.0;
+// Classic hour-16 fallbacks (used when painterly < 0.5).
 const vec3 shadow_tint = vec3(0.90, 0.95, 1.14);
 const vec3 grade_lift = vec3(0.004, 0.006, 0.012);
 const float grade_sat = 1.1;
@@ -102,11 +120,33 @@ vec2 w_lut_uv(vec3 dir) {
 	return vec2(u, v);
 }
 
+vec3 w_sky_analytic(vec3 dir) {
+	vec3 d = w_normalize(dir);
+	float ey = clamp(d.y, 0.0, 1.0);
+	float zen_k = smoothstep(0.06, 0.80, ey);
+	float hz_k = exp(-ey * 4.4);
+	vec3 col = mix(sky_mid_col, sky_zenith_col, zen_k);
+	col = mix(col, sky_horizon_col, hz_k);
+	float mu = max(dot(d, sun_dir), 0.0);
+	float mu2 = mu * mu;
+	float mu6 = mu2 * mu2 * mu2;
+	float hz_band = exp(-ey * 2.8);
+	col += sky_glow_col * (mu2 * (0.34 + 0.66 * hz_band) + mu6 * 0.55);
+	return clamp(w_denan(col, vec3(0.0)), vec3(0.0), vec3(40.0));
+}
+
 vec3 w_sky(vec3 dir) {
+	if (sky_analytic > 0.999) {
+		return w_sky_analytic(dir);
+	}
 	vec3 c = textureLod(sky_lut, w_lut_uv(dir), 0.0).rgb;
 	// Guard NaN/Inf before clamping so bloom never explodes into squares.
 	c = w_denan(c, vec3(0.0));
-	return clamp(c, vec3(0.0), vec3(40.0));
+	c = clamp(c, vec3(0.0), vec3(40.0));
+	if (sky_analytic > 0.001) {
+		c = mix(c, w_sky_analytic(dir), sky_analytic);
+	}
+	return c;
 }
 
 float w_luma(vec3 c) {
@@ -116,25 +156,32 @@ float w_luma(vec3 c) {
 // Styled sky base shared by sky.gdshader and w_horizon_color so far terrain fog matches the sky.
 vec3 w_sky_base(vec3 dir) {
 	vec3 col = w_sky(vec3(dir.x, max(dir.y, -0.02), dir.z));
+	if (sky_analytic > 0.999) {
+		return col;
+	}
 	float lum_s = w_luma(col);
 	float sat = painterly > 0.5 ? sky_sat : 1.40;
-	col = mix(vec3(lum_s), col, sat);
+	vec3 styled = mix(vec3(lum_s), col, sat);
 	float hz = exp(-max(dir.y, 0.0) * 8.5);
 	vec3 h_tint = painterly > 0.5 ? horizon_tint : vec3(0.96, 1.0, 1.04);
 	float h_mix = painterly > 0.5 ? horizon_haze : 0.32;
-	col = mix(col, vec3(lum_s) * h_tint * 1.15, hz * h_mix);
-	col = max(col, vec3(0.0));
-	col.g = min(col.g, (col.r + col.b) * 0.6);
-	return clamp(col, vec3(0.0), vec3(40.0));
+	styled = mix(styled, vec3(lum_s) * h_tint * 1.15, hz * h_mix);
+	styled = max(styled, vec3(0.0));
+	styled.g = min(styled.g, (styled.r + styled.b) * 0.6);
+	styled = clamp(styled, vec3(0.0), vec3(40.0));
+	if (sky_analytic > 0.001) {
+		return mix(styled, col, sky_analytic);
+	}
+	return styled;
 }
 
 // Shared horizon-matched sky colour (base sky + broad sun halo) used by w_atmosphere and clouds
 // so distant slopes fade seamlessly into the exact sky colour behind them.
 vec3 w_horizon_color(vec3 dir) {
-	vec3 d = normalize(vec3(dir.x, max(dir.y, -0.02), dir.z));
+	vec3 d = w_normalize(vec3(dir.x, max(dir.y, -0.02), dir.z));
 	vec3 col = w_sky_base(d);
 	float mu = dot(d, sun_dir);
-	col += sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
+	col += sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45 * sun_disc_vis;
 	col = w_denan(col, vec3(0.0));
 	return clamp(col, vec3(0.0), vec3(40.0));
 }
@@ -174,21 +221,21 @@ vec3 godot_out(vec3 v) {
 // saturation / lift / contrast, vignette, sRGB encode. With post_on the composite pass does this
 // (plus bloom, FXAA, sharpen and grain) on the full-resolution screen, as Stillwater does.
 vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
-	col = styl_tone(col * exposure);
-	{
+	col = styl_tone(col * exposure * grade_wb);
+	if (day_fresh_k > 0.001) {
 		float mx = max(col.r, max(col.g, col.b));
 		float mn = min(col.r, min(col.g, col.b));
 		float chroma = mx - mn;
 		float is_green = smoothstep(0.01, 0.09, col.g - max(col.r * 0.84, col.b)) * smoothstep(0.02, 0.14, chroma);
 		float day_fresh = is_green * smoothstep(0.16, 0.45, mx);
-		col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45);
+		col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45 * day_fresh_k);
 	}
 	float Lg = w_luma(col);
-	vec3 s_tint = painterly > 0.5 ? vec3(0.88, 0.90, 1.20) : shadow_tint;
-	vec3 s_cast = painterly > 0.5 ? vec3(0.93, 0.92, 1.14) : vec3(0.95, 0.96, 1.08);
-	vec3 lift = painterly > 0.5 ? vec3(0.006, 0.006, 0.016) : grade_lift;
-	float sat = painterly > 0.5 ? 1.12 : grade_sat;
-	float contrast = painterly > 0.5 ? 0.08 : grade_contrast;
+	vec3 s_tint = painterly > 0.5 ? grade_shadow_tint : shadow_tint;
+	vec3 s_cast = painterly > 0.5 ? grade_shadow_cast : vec3(0.95, 0.96, 1.08);
+	vec3 lift = painterly > 0.5 ? grade_lift_u : grade_lift;
+	float sat = painterly > 0.5 ? grade_sat_u : grade_sat;
+	float contrast = painterly > 0.5 ? grade_contrast_u : grade_contrast;
 	float vig = painterly > 0.5 ? 0.24 : vignette;
 	col *= mix(s_tint, vec3(1.04, 1.0, 0.94), smoothstep(0.08, 0.68, Lg));
 	col = mix(col, vec3(Lg) * s_cast, (1.0 - smoothstep(0.04, 0.36, Lg)) * 0.16);
@@ -197,7 +244,7 @@ vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
 	col = col + lift * (1.0 - col);
 	col = clamp(col, 0.0, 1.0);
 	col = mix(col, col * col * (3.0 - 2.0 * col), contrast);
-	vec2 vv = (screen_uv - 0.5) * vec2(viewport.x / viewport.y, 1.0);
+	vec2 vv = (screen_uv - 0.5) * vec2(viewport.x / max(viewport.y, 1.0), 1.0);
 	col *= clamp(1.0 - dot(vv, vv) * vig, 0.0, 1.0);
 	return to_srgb(col);
 }

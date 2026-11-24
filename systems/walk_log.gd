@@ -113,7 +113,10 @@ func _publish_ui(delta: float) -> void:
 		"dev_on": ui.dev_on, "dev_grid": ui.grid.is_visible_in_tree(), "bench_running": ui.bench_sys.running,
 		"bench_done": ui.panel.visible, "grass_on": ui.grass_sys.is_on(), "hud_visible": h.visible,
 		"safe": [h.safe.x, h.safe.y, h.safe.z, h.safe.w],
-		"pause_btn": _rect(h.pause_btn), "perf_btn": _rect(h.dev_btn), "resume_btn": _rect(h.resume_btn),
+		"pause_btn": _rect(h.pause_btn), "perf_btn": _rect(h.dev_btn), "sound_btn": _rect(h.sound_btn), "resume_btn": _rect(h.resume_btn),
+		"audio_started": session.audio_sys.is_started() if session.audio_sys != null else false,
+		"audio_muted": session.audio_sys.is_muted() if session.audio_sys != null else false,
+		"tod": session.env_sys.tod_preset if session.env_sys != null else "noon",
 		"trail_btn": _rect(h.btn.autoWalk), "sit_btn": _rect(h.btn.sit), "compass": _rect(h.compass) if h.get("compass") is Control else [],
 		"lever_grass": _rect(ui.btn.grass), "lever_bench": _rect(ui.btn.bench), "panel_close": _rect(ui.btn.panel_close),
 	}

@@ -65,7 +65,7 @@ void vertex() {
 	float edge = w_rstep(box_size * 0.48, box_size * 0.30, length(rel));
 	float dist_k = smoothstep(1.0, 2.6, dist) * w_rstep(12.5, 7.2, dist);
 	float above_water = smoothstep(water_level + 0.3, water_level + 1.2, g);
-	float sun_up = smoothstep(0.02, 0.14, sun_dir.y);
+	float sun_up = smoothstep(0.02, 0.14, sun_dir.y) * sun_disc_vis;
 	float mu = max(dot(dir, sun_dir), 0.0);
 	float mu2 = mu * mu;
 	float fwd = mu2 * mu2;

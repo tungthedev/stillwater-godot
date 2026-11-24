@@ -29,7 +29,7 @@ if (!process.env.BASE) throw new Error('set BASE to the server for build/web');
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
 const LAND = { width: 844, height: 390, deviceScaleFactor: 3, isMobile: true, hasTouch: true, isLandscape: true };
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1';
-const ALL = ['pause_freeze', 'hud_buttons', 'stick_recovery', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas'];
+const ALL = ['pause_freeze', 'hud_buttons', 'stick_recovery', 'two_thumbs', 'perf_bench', 'debug_flag', 'safe_areas', 'audio_gate'];
 const CASES = argVal('--cases', ALL.join(',')).split(',');
 
 const { launchBrowser } = await import(pathToFileURL(path.join(SW, 'tools/chrome.mjs')).href);
@@ -400,6 +400,36 @@ try {
       if (c.length) check(c[1] >= pad[0], `${tag}: compass below the top inset (${c.map(Math.round)})`);
       await p.page.close();
     }
+  });
+
+  if (CASES.includes('audio_gate')) await run('audio_gate', async (check, r) => {
+    // Safari autoplay contract: audio must NOT start before the first user gesture, must start
+    // on the first tap, and the pause-sheet Sound toggle must mute/unmute cleanly.
+    const p = await open(PHONE);
+    let u = await p.until('title', (x) => x.mode === 'title', 30000);
+    await sleep(1200);
+    u = await p.fresh();
+    const pre = await p.page.evaluate(() => window.__swAudio ? { started: window.__swAudio.started, state: window.__swAudio.state } : null);
+    check(pre && pre.started === false && !u.audio_started, `audio stays stopped before first tap (started=${pre?.started}, state=${pre?.state})`);
+    // First tap on title screen must unlock audio and enter play.
+    u = await p.start();
+    const post = await p.page.evaluate(() => window.__swAudio ? { started: window.__swAudio.started, muted: window.__swAudio.muted, state: window.__swAudio.state } : null);
+    check(post && post.started === true && u.audio_started === true, `audio started after first tap (started=${post?.started}, state=${post?.state})`);
+    check(u.audio_muted === false, `audio starts unmuted (muted=${u.audio_muted})`);
+    // Open pause sheet and tap the Sound toggle off and back on.
+    await p.tapRect(u.pause_btn, 'pause button');
+    u = await p.fresh();
+    check(u.sound_btn && u.sound_btn.length === 4, `pause sheet shows Sound toggle (${JSON.stringify(u.sound_btn)})`);
+    await p.tapRect(u.sound_btn, 'Sound toggle off');
+    u = await p.fresh();
+    r.shots.push(await p.shot('audio_muted_sheet'));
+    check(u.audio_muted === true, `tapping Sound muted audio (muted=${u.audio_muted})`);
+    await p.tapRect(u.sound_btn, 'Sound toggle on');
+    u = await p.fresh();
+    check(u.audio_muted === false, `tapping Sound unmuted audio (muted=${u.audio_muted})`);
+    const errs = p.logs.filter((l) => /SCRIPT ERROR|PAGEERROR|ERROR:/.test(l));
+    check(errs.length === 0, `no errors (${errs.slice(0, 3).join(' | ')})`);
+    await p.page.close();
   });
 } finally {
   await browser.close();

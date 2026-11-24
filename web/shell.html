@@ -80,6 +80,258 @@ html, body { margin: 0; padding: 0; border: 0; width: 100%; height: 100%; backgr
 		});
 	};
 }());
+// Gesture-gated procedural Web Audio soundscape (W5, ported from Stillwater src/audio.js).
+// Never constructs AudioContext on load (Safari autoplay rule); unlocks strictly inside a real
+// user gesture when armed by the game. Runs natively on the audio thread (0 ms per-frame main loop).
+(function () {
+	if (window.__swAudio) return;
+	const api = window.__swAudio = {
+		armed: false,
+		enabled: true,
+		started: false,
+		muted: false,
+		unlockCount: 0,
+		state: 'uninitialized',
+		_ctx: null,
+		_master: null,
+		_windG: null, _windF: null,
+		_rustleG: null,
+		_lakeG: null,
+		_streamG: null, _streamPan: null,
+		_fallsG: null, _fallsLoG: null, _fallsPan: null,
+		_noiseBuf: null,
+		_bioTimer: null,
+		_p: { wind: 0.25, forest: 0.2, lake: 0, stream: 0, streamPan: 0, falls: 0, fallsPan: 0, day: 1, night: 0, alt: 0 },
+		setArmed(v) { this.armed = !!v; },
+		_ensure() {
+			if (!this.enabled || this.started) return this.started;
+			const AC = window.AudioContext || window.webkitAudioContext;
+			if (!AC) return false;
+			try {
+				const ctx = new AC();
+				this._ctx = ctx;
+				const master = ctx.createGain();
+				master.gain.value = this.muted ? 0.0 : 0.72;
+				master.connect(ctx.destination);
+				this._master = master;
+
+				// 4 s looping pink-ish noise buffer shared by wind, foliage, lake, stream & waterfall.
+				const len = Math.floor(ctx.sampleRate * 4);
+				const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+				const d = buf.getChannelData(0);
+				let b0 = 0, b1 = 0, b2 = 0;
+				for (let i = 0; i < len; i++) {
+					const w = Math.random() * 2 - 1;
+					b0 = 0.997 * b0 + w * 0.029;
+					b1 = 0.985 * b1 + w * 0.032;
+					b2 = 0.950 * b2 + w * 0.048;
+					d[i] = Math.max(-1, Math.min(1, (b0 + b1 + b2 + w * 0.14) * 1.15));
+				}
+				this._noiseBuf = buf;
+
+				const makeNoise = () => {
+					const s = ctx.createBufferSource();
+					s.buffer = buf;
+					s.loop = true;
+					s.start(0, Math.random() * 3.5);
+					return s;
+				};
+				const makePan = () => (typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null);
+
+				// 1. Valley wind bed
+				const wSrc = makeNoise();
+				const wF = ctx.createBiquadFilter(); wF.type = 'lowpass'; wF.frequency.value = 240; wF.Q.value = 0.7;
+				const wG = ctx.createGain(); wG.gain.value = 0.08;
+				wSrc.connect(wF); wF.connect(wG); wG.connect(master);
+				this._windF = wF; this._windG = wG;
+
+				// 2. Foliage / meadow breeze rustle
+				const rSrc = makeNoise();
+				const rF = ctx.createBiquadFilter(); rF.type = 'bandpass'; rF.frequency.value = 1850; rF.Q.value = 1.4;
+				const rG = ctx.createGain(); rG.gain.value = 0.02;
+				rSrc.connect(rF); rF.connect(rG); rG.connect(master);
+				this._rustleG = rG;
+
+				// 3. Lake shore lapping (gentle wave-LFO modulated lowpass)
+				const lSrc = makeNoise();
+				const lF = ctx.createBiquadFilter(); lF.type = 'lowpass'; lF.frequency.value = 460;
+				const lG = ctx.createGain(); lG.gain.value = 0.0;
+				const lLfo = ctx.createOscillator(); lLfo.frequency.value = 0.18;
+				const lLfoG = ctx.createGain(); lLfoG.gain.value = 140;
+				lLfo.connect(lLfoG); lLfoG.connect(lF.frequency); lLfo.start();
+				lSrc.connect(lF); lF.connect(lG); lG.connect(master);
+				this._lakeG = lG;
+
+				// 4. Stream babble (stereo panned)
+				const sSrc = makeNoise();
+				const sF = ctx.createBiquadFilter(); sF.type = 'bandpass'; sF.frequency.value = 1150; sF.Q.value = 1.1;
+				const sG = ctx.createGain(); sG.gain.value = 0.0;
+				const sPan = makePan();
+				sSrc.connect(sF); sF.connect(sG);
+				if (sPan) { sG.connect(sPan); sPan.connect(master); } else { sG.connect(master); }
+				this._streamG = sG; this._streamPan = sPan;
+
+				// 5. Waterfall deep roar + misty spray hiss (stereo panned)
+				const fSrc = makeNoise();
+				const fLo = ctx.createBiquadFilter(); fLo.type = 'lowpass'; fLo.frequency.value = 260;
+				const fHi = ctx.createBiquadFilter(); fHi.type = 'bandpass'; fHi.frequency.value = 2100; fHi.Q.value = 0.8;
+				const fLoG = ctx.createGain(); fLoG.gain.value = 0.0;
+				const fHiG = ctx.createGain(); fHiG.gain.value = 0.0;
+				const fPan = makePan();
+				fSrc.connect(fLo); fLo.connect(fLoG);
+				fSrc.connect(fHi); fHi.connect(fHiG);
+				if (fPan) { fLoG.connect(fPan); fHiG.connect(fPan); fPan.connect(master); }
+				else { fLoG.connect(master); fHiG.connect(master); }
+				this._fallsLoG = fLoG; this._fallsG = fHiG; this._fallsPan = fPan;
+
+				// Lazy wildlife scheduler (1.8 s cadence; zero per-frame cost).
+				this._bioTimer = setInterval(() => this._bioTick(), 1800);
+				this.started = true;
+				this.unlockCount++;
+				this.state = ctx.state || 'running';
+				this._applyParams();
+				return true;
+			} catch (e) {
+				this.state = 'error';
+				return false;
+			}
+		},
+		unlock() {
+			if (!this.enabled) return false;
+			if (!this.started) {
+				if (!this._ensure()) return false;
+			}
+			if (this._ctx && this._ctx.state === 'suspended') {
+				this._ctx.resume().then(() => { this.state = this._ctx ? this._ctx.state : 'running'; }).catch(() => {});
+			}
+			return this.started;
+		},
+		setMuted(m) {
+			this.muted = !!m;
+			if (this._ctx && this._master) {
+				const t = this._ctx.currentTime;
+				this._master.gain.setTargetAtTime(this.muted || !this.enabled ? 0.0 : 0.72, t, 0.08);
+			}
+		},
+		setEnabled(e) {
+			this.enabled = !!e;
+			if (this._ctx && this._master) {
+				const t = this._ctx.currentTime;
+				this._master.gain.setTargetAtTime(this.muted || !this.enabled ? 0.0 : 0.72, t, 0.08);
+				if (!this.enabled && this._ctx.state === 'running') {
+					this._ctx.suspend().catch(() => {});
+				} else if (this.enabled && !this.muted && this._ctx.state === 'suspended') {
+					this._ctx.resume().catch(() => {});
+				}
+			}
+		},
+		update(wind, forest, lake, stream, streamPan, falls, fallsPan, day, night, alt) {
+			const p = this._p;
+			p.wind = wind; p.forest = forest; p.lake = lake;
+			p.stream = stream; p.streamPan = streamPan;
+			p.falls = falls; p.fallsPan = fallsPan;
+			p.day = day; p.night = night; p.alt = alt;
+			if (this.started && this.enabled) this._applyParams();
+		},
+		_applyParams() {
+			if (!this._ctx) return;
+			const t = this._ctx.currentTime, p = this._p;
+			const w = Math.max(0.05, Math.min(1.0, p.wind + p.alt * 0.45));
+			this._windF.frequency.setTargetAtTime(160 + w * 480, t, 0.25);
+			this._windG.gain.setTargetAtTime(0.055 + w * 0.14, t, 0.25);
+			this._rustleG.gain.setTargetAtTime(0.012 + p.forest * w * 0.09, t, 0.25);
+			this._lakeG.gain.setTargetAtTime(p.lake * 0.16, t, 0.25);
+			this._streamG.gain.setTargetAtTime(p.stream * 0.18, t, 0.20);
+			if (this._streamPan) this._streamPan.pan.setTargetAtTime(Math.max(-0.85, Math.min(0.85, p.streamPan)), t, 0.20);
+			this._fallsLoG.gain.setTargetAtTime(p.falls * 0.34, t, 0.22);
+			this._fallsG.gain.setTargetAtTime(p.falls * 0.15, t, 0.22);
+			if (this._fallsPan) this._fallsPan.pan.setTargetAtTime(Math.max(-0.85, Math.min(0.85, p.fallsPan)), t, 0.22);
+		},
+		_bioTick() {
+			if (!this.started || !this.enabled || this.muted || !this._ctx || this._ctx.state !== 'running') return;
+			const p = this._p, ctx = this._ctx, t = ctx.currentTime;
+			if (p.day > 0.25 && Math.random() < 0.48 * p.day) {
+				// Delicate sunlit valley songbird chirp (2-3 quick melodic notes).
+				const base = 2400 + Math.random() * 1900;
+				const notes = 2 + (Math.random() < 0.5 ? 1 : 0);
+				const pan = typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+				if (pan) { pan.pan.value = (Math.random() * 2 - 1) * 0.85; pan.connect(this._master); }
+				const dst = pan || this._master;
+				for (let n = 0; n < notes; n++) {
+					const st = t + n * 0.11;
+					const osc = ctx.createOscillator();
+					const g = ctx.createGain();
+					osc.type = 'sine';
+					const f0 = base * (1 + (Math.random() - 0.5) * 0.22);
+					osc.frequency.setValueAtTime(f0, st);
+					osc.frequency.exponentialRampToValueAtTime(f0 * (1.08 + Math.random() * 0.16), st + 0.075);
+					g.gain.setValueAtTime(0.0001, st);
+					g.gain.linearRampToValueAtTime(0.018 * p.day, st + 0.015);
+					g.gain.exponentialRampToValueAtTime(0.0001, st + 0.095);
+					osc.connect(g); g.connect(dst);
+					osc.start(st); osc.stop(st + 0.105);
+				}
+			} else if (p.night > 0.25 && Math.random() < 0.65 * p.night) {
+				// Evening/night meadow crickets + occasional distant owl.
+				const pan = typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+				if (pan) { pan.pan.value = (Math.random() * 2 - 1) * 0.8; pan.connect(this._master); }
+				const dst = pan || this._master;
+				if (Math.random() < 0.18) {
+					const osc = ctx.createOscillator();
+					const g = ctx.createGain();
+					osc.type = 'sine';
+					osc.frequency.setValueAtTime(340, t);
+					osc.frequency.exponentialRampToValueAtTime(295, t + 0.45);
+					g.gain.setValueAtTime(0.0001, t);
+					g.gain.linearRampToValueAtTime(0.022 * p.night, t + 0.06);
+					g.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+					osc.connect(g); g.connect(dst);
+					osc.start(t); osc.stop(t + 0.55);
+				} else {
+					const f = 4150 + Math.random() * 420;
+					for (let c = 0; c < 4; c++) {
+						const st = t + c * 0.065;
+						const osc = ctx.createOscillator();
+						const g = ctx.createGain();
+						osc.type = 'triangle';
+						osc.frequency.value = f;
+						g.gain.setValueAtTime(0.0001, st);
+						g.gain.linearRampToValueAtTime(0.0085 * p.night, st + 0.012);
+						g.gain.exponentialRampToValueAtTime(0.0001, st + 0.048);
+						osc.connect(g); g.connect(dst);
+						osc.start(st); osc.stop(st + 0.055);
+					}
+				}
+			}
+		},
+		footstep(surface, intensity) {
+			if (!this.started || !this.enabled || this.muted || !this._ctx || !this._noiseBuf || this._ctx.state !== 'running') return;
+			const ctx = this._ctx, t = ctx.currentTime;
+			const vol = Math.max(0.15, Math.min(1.0, intensity || 0.7));
+			const s = ctx.createBufferSource();
+			s.buffer = this._noiseBuf;
+			const f = ctx.createBiquadFilter();
+			const g = ctx.createGain();
+			let dur = 0.09, gain = 0.065 * vol;
+			if (surface === 'gravel') { f.type = 'bandpass'; f.frequency.value = 1650 + Math.random() * 450; f.Q.value = 1.2; dur = 0.11; gain = 0.08 * vol; }
+			else if (surface === 'rock') { f.type = 'bandpass'; f.frequency.value = 950 + Math.random() * 260; f.Q.value = 2.0; dur = 0.07; gain = 0.075 * vol; }
+			else if (surface === 'water') { f.type = 'bandpass'; f.frequency.value = 1200 + Math.random() * 500; f.Q.value = 0.9; dur = 0.16; gain = 0.10 * vol; }
+			else { f.type = 'lowpass'; f.frequency.value = 720 + Math.random() * 240; dur = 0.09; gain = 0.055 * vol; }
+			g.gain.setValueAtTime(0.0001, t);
+			g.gain.linearRampToValueAtTime(gain, t + 0.012);
+			g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+			s.connect(f); f.connect(g); g.connect(this._master);
+			s.start(t, Math.random() * 3.2, dur + 0.02);
+		},
+	};
+	// Safari autoplay gate: unlock synchronously on the first real user gesture once armed by the game.
+	const onGesture = () => {
+		if (api.armed && api.enabled && !api.started) api.unlock();
+	};
+	for (const ev of ['touchstart', 'pointerdown', 'click', 'keydown']) {
+		window.addEventListener(ev, onGesture, { passive: true, capture: true });
+	}
+}());
 		</script>
 		<script src="$GODOT_URL"></script>
 		<script>

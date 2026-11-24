@@ -292,6 +292,12 @@ func undergrowth_info() -> Dictionary:
 	return {}
 
 
+func fauna_info() -> Dictionary:
+	if meta.has("fauna") and meta.fauna is Dictionary:
+		return meta.fauna
+	return {}
+
+
 # Loads data/valley/web/mushrooms.bin: 9 float32 values per mushroom
 # [x, y, z, scale, stem_h, cap_r, tilt, rot, is_golden].
 func load_mushrooms() -> Dictionary:

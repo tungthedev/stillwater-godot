@@ -84,8 +84,10 @@ func setup(env_node: Node, float_targets: bool) -> void:
 	comp_mat.shader = load("res://shaders/post_composite.gdshader")
 	comp_mat.set_shader_parameter("t_scene", scene_vp.get_texture())
 	comp_mat.set_shader_parameter("t_bloom", up[0].get_texture())
-	comp_mat.set_shader_parameter("exposure", env_sys.EXPOSURE)
+	comp_mat.set_shader_parameter("exposure", env_sys.exposure)
 	comp_mat.set_shader_parameter("painterly", 1.0 if env_sys.painterly else 0.0)
+	if env_sys.has_method("add_tod_listener"):
+		env_sys.add_tod_listener(apply_tod)
 	rect.material = comp_mat
 	comp_layer.add_child(rect)
 	add_child(comp_layer)
@@ -185,6 +187,20 @@ func set_painterly(p: bool) -> void:
 		comp_mat.set_shader_parameter("painterly", 1.0 if p else 0.0)
 
 
+func apply_tod(e: Node) -> void:
+	if comp_mat == null or e == null:
+		return
+	comp_mat.set_shader_parameter("exposure", e.exposure)
+	comp_mat.set_shader_parameter("grade_wb", e.grade_wb)
+	comp_mat.set_shader_parameter("grade_shadow_tint", e.grade_shadow_tint)
+	comp_mat.set_shader_parameter("grade_shadow_cast", e.grade_shadow_cast)
+	comp_mat.set_shader_parameter("grade_lift_u", e.grade_lift_u)
+	comp_mat.set_shader_parameter("grade_sat_u", e.grade_sat_u)
+	comp_mat.set_shader_parameter("grade_contrast_u", e.grade_contrast_u)
+	comp_mat.set_shader_parameter("day_fresh_k", e.day_fresh_k)
+	_sun_valid = false
+
+
 func set_on(v: bool) -> void:
 	on = v and hdr
 	var mode := SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
@@ -274,7 +290,7 @@ func _tick(_delta: float) -> void:
 			uv = _cam.unproject_position(p) / Vector2(internal)
 			var ndc := uv * 2.0 - Vector2.ONE
 			if absf(ndc.x) < 1.3 and absf(ndc.y) < 1.3:
-				vis = _ss(-0.03, 0.04, sun_dir.y) * _ss(0.3, 0.8, facing)
+				vis = _ss(-0.03, 0.04, sun_dir.y) * _ss(0.3, 0.8, facing) * float(env_sys.sun_disc_vis)
 	if vis != _last_vis:
 		_last_vis = vis
 		comp_mat.set_shader_parameter("sun_vis", vis)

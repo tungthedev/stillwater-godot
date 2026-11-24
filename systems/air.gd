@@ -17,16 +17,20 @@ const SHAFT_DIST := 96.0
 const SHAFT_CAP := 10
 const MOTE_COUNT := 160
 const SPRAY_DIST := 440.0
+const SMOKE_COUNT := 20
+const SMOKE_DIST := 520.0
 
 var world: RefCounted
 var env_sys: Node
 var shaft_mat: ShaderMaterial
 var mote_mat: ShaderMaterial
 var spray_mat: ShaderMaterial
+var smoke_mat: ShaderMaterial
 
 var _shaft_swap: RefCounted
 var _mote_swap: RefCounted
 var _spray_swap: RefCounted
+var _smoke_swap: RefCounted
 
 var _shaft_buf := PackedFloat32Array()
 var _shafts: Array = []
@@ -40,6 +44,10 @@ var _spray_count := 0
 var _spray_center := Vector3.ZERO
 var _spray_aabb := AABB()
 var _spray_vis := false
+var _smoke_count := 0
+var _smoke_center := Vector3.ZERO
+var _smoke_aabb := AABB()
+var _smoke_vis := false
 
 var _cull_pos := Vector3(1e9, 0.0, 1e9)
 var _dist_scale := 1.0
@@ -49,6 +57,7 @@ var _on := true
 var _shafts_on := true
 var _motes_on := true
 var _spray_on := true
+var _smoke_on := true
 var frozen := false
 
 var last_draws := 0
@@ -74,13 +83,14 @@ func _ready() -> void:
 	_build_shafts()
 	_build_motes()
 	_build_waterfall_spray()
+	_build_chimney_smoke()
 	load_ms = Time.get_ticks_msec() - t0
-	print("AIR built in %d ms: shafts=%d (cap %d), motes=%d, waterfall_spray=%d puffs" % [
-		load_ms, _shafts.size(), SHAFT_CAP, _mote_active, _spray_count])
+	print("AIR built in %d ms: shafts=%d (cap %d), motes=%d, waterfall_spray=%d puffs, chimney_smoke=%d puffs" % [
+		load_ms, _shafts.size(), SHAFT_CAP, _mote_active, _spray_count, _smoke_count])
 
 
 func materials() -> Array[ShaderMaterial]:
-	return [shaft_mat, mote_mat, spray_mat]
+	return [shaft_mat, mote_mat, spray_mat, smoke_mat]
 
 
 func set_on(v: bool) -> void:
@@ -115,6 +125,11 @@ func set_spray_on(v: bool) -> void:
 	_sync_visibility()
 
 
+func set_smoke_on(v: bool) -> void:
+	_smoke_on = v
+	_sync_visibility()
+
+
 func set_frozen(v: bool) -> void:
 	frozen = v
 
@@ -146,6 +161,8 @@ func _sync_visibility() -> void:
 		_mote_swap.set_visible(_on and _motes_on and _mote_active > 0)
 	if _spray_swap != null:
 		_spray_swap.set_visible(_on and _spray_on and _spray_vis and _spray_count > 0)
+	if _smoke_swap != null:
+		_smoke_swap.set_visible(_on and _smoke_on and _smoke_vis and _smoke_count > 0)
 
 
 func _process(_delta: float) -> void:
@@ -171,6 +188,11 @@ func update_cull(cam: Camera3D, force: bool = false) -> void:
 		_spray_vis = cp.distance_squared_to(_spray_center) <= sd * sd
 	else:
 		_spray_vis = false
+	if _smoke_count > 0:
+		var smd := SMOKE_DIST * _dist_scale
+		_smoke_vis = cp.distance_squared_to(_smoke_center) <= smd * smd
+	else:
+		_smoke_vis = false
 	_sync_visibility()
 
 
@@ -191,6 +213,9 @@ func count_drawn(cam: Camera3D) -> void:
 	if _spray_on and _spray_vis and _spray_count > 0 and _aabb_in_frustum(_spray_aabb, planes):
 		draws += 1
 		tris += _spray_count * 2
+	if _smoke_on and _smoke_vis and _smoke_count > 0 and _aabb_in_frustum(_smoke_aabb, planes):
+		draws += 1
+		tris += _smoke_count * 2
 	last_draws = draws
 	last_tris = tris
 
@@ -242,6 +267,13 @@ func _build_materials() -> void:
 	spray_mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
 	spray_mat.set_shader_parameter("noise_tex", world.noise_tex)
 	spray_mat.set_shader_parameter("water_level", world.water_level)
+
+	smoke_mat = ShaderMaterial.new()
+	smoke_mat.shader = load("res://shaders/chimney_smoke.gdshader")
+	smoke_mat.render_priority = 2
+	smoke_mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
+	smoke_mat.set_shader_parameter("noise_tex", world.noise_tex)
+	smoke_mat.set_shader_parameter("water_level", world.water_level)
 
 
 func _build_quad(x0: float, x1: float, y0: float, y1: float, mat: Material) -> ArrayMesh:
@@ -423,3 +455,34 @@ func _build_waterfall_spray() -> void:
 	_spray_swap = SwapMultiMesh.new(self, mesh, TOTAL, aabb)
 	_spray_swap.push(buf, TOTAL)
 	_spray_swap.set_visible(false)
+
+
+# ---------- 4. Cottage Chimney Woodsmoke (W5, 20 puffs = 40 tris, 1 draw when near cottage) ----------
+func _build_chimney_smoke() -> void:
+	var finfo: Dictionary = world.fauna_info()
+	if not finfo.has("chimney"):
+		return
+	var ch: Array = finfo.chimney
+	if ch.size() < 3:
+		return
+	var origin := Vector3(float(ch[0]), float(ch[1]), float(ch[2]))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 505
+	var buf := PackedFloat32Array()
+	buf.resize(SMOKE_COUNT * 16)
+	for i in SMOKE_COUNT:
+		var o := i * 16
+		buf[o + 0] = 1.0; buf[o + 1] = 0.0; buf[o + 2] = 0.0; buf[o + 3] = origin.x
+		buf[o + 4] = 0.0; buf[o + 5] = 1.0; buf[o + 6] = 0.0; buf[o + 7] = origin.y
+		buf[o + 8] = 0.0; buf[o + 9] = 0.0; buf[o + 10] = 1.0; buf[o + 11] = origin.z
+		buf[o + 12] = float(i) / float(SMOKE_COUNT)
+		buf[o + 13] = rng.randf()
+		buf[o + 14] = 0.0
+		buf[o + 15] = 0.0
+	_smoke_count = SMOKE_COUNT
+	_smoke_center = origin + Vector3(0.0, 6.0, 0.0)
+	_smoke_aabb = AABB(origin - Vector3(12.0, 2.0, 12.0), Vector3(24.0, 22.0, 24.0))
+	var mesh := _build_quad(-1.0, 1.0, -1.0, 1.0, smoke_mat)
+	_smoke_swap = SwapMultiMesh.new(self, mesh, SMOKE_COUNT, _smoke_aabb)
+	_smoke_swap.push(buf, SMOKE_COUNT)
+	_smoke_swap.set_visible(false)

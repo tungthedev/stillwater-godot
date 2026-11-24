@@ -30,6 +30,8 @@ var water_sys: Node
 var props_sys: Node
 var undergrowth_sys: Node
 var air_sys: Node
+var fauna_sys: Node
+var audio_sys: Node
 var trees_sys: Node
 var grass_sys: Node
 var clouds_sys: Node
@@ -81,6 +83,9 @@ var _base_water := true
 var _base_props := true
 var _base_undergrowth := true
 var _base_air := true
+var _base_fauna := true
+var _base_audio := true
+var _base_tod := "noon"
 var _base_clouds := true
 var _base_cloud_billboard := false
 var _base_sky_clouds := true
@@ -103,6 +108,8 @@ func setup(nodes: Dictionary) -> void:
 	props_sys = nodes.get("props", null)
 	undergrowth_sys = nodes.get("undergrowth", null)
 	air_sys = nodes.get("air", null)
+	fauna_sys = nodes.get("fauna", null)
+	audio_sys = nodes.get("audio", null)
 	trees_sys = nodes.trees
 	grass_sys = nodes.grass
 	clouds_sys = nodes.clouds
@@ -141,6 +148,9 @@ func start() -> void:
 	_base_props = props_sys != null and props_sys.is_on()
 	_base_undergrowth = undergrowth_sys != null and undergrowth_sys.is_on()
 	_base_air = air_sys != null and air_sys.is_on()
+	_base_fauna = fauna_sys != null and fauna_sys.is_on()
+	_base_audio = audio_sys != null and audio_sys.is_on()
+	_base_tod = env_sys.tod_preset
 	_base_cloud_billboard = clouds_sys.is_on()
 	_base_sky_clouds = env_sys.sky_clouds_on
 	_base_clouds = _base_cloud_billboard or _base_sky_clouds
@@ -245,6 +255,15 @@ func _build_variants() -> void:
 		_variants.append({"id": "spray_off", "label": "spray off", "disjoint": false})
 	else:
 		_skipped.append("air_off (base air off)")
+	if _base_fauna:
+		_variants.append({"id": "fauna_off", "label": "fauna off", "disjoint": true})
+	else:
+		_skipped.append("fauna_off (base fauna off)")
+	_variants.append({"id": "tod_night", "label": "tod night", "disjoint": false})
+	if _base_audio:
+		_variants.append({"id": "audio_off", "label": "audio off", "disjoint": false})
+	else:
+		_skipped.append("audio_off (base audio off)")
 	_variants.append({"id": "sky_flat", "label": "sky flat", "disjoint": true})
 	if _base_clouds:
 		_variants.append({"id": "clouds_off", "label": "clouds off", "disjoint": true})
@@ -276,6 +295,10 @@ func _set_systems_frozen(v: bool) -> void:
 		undergrowth_sys.set_frozen(v)
 	if air_sys != null:
 		air_sys.set_frozen(v)
+	if fauna_sys != null:
+		fauna_sys.set_frozen(v)
+	if audio_sys != null:
+		audio_sys.set_frozen(v)
 	env_sys.set_frozen(v)
 	post.set_frozen(v)
 	cam.set_process(not v)
@@ -310,6 +333,12 @@ func _reset_to_base() -> void:
 		air_sys.set_shafts_on(true)
 		air_sys.set_motes_on(true)
 		air_sys.set_spray_on(true)
+		air_sys.set_smoke_on(true)
+	if fauna_sys != null:
+		fauna_sys.set_on(_base_fauna)
+	if audio_sys != null:
+		audio_sys.set_on(_base_audio)
+	env_sys.set_tod(_base_tod)
 	env_sys.set_sky_flat(false)
 	env_sys.set_cirrus_on(true)
 	env_sys.set_sky_clouds_on(_base_sky_clouds)
@@ -336,6 +365,8 @@ func _apply_variant(id: String) -> void:
 				undergrowth_sys.set_on(false)
 			if air_sys != null:
 				air_sys.set_on(false)
+			if fauna_sys != null:
+				fauna_sys.set_on(false)
 			grass_sys.set_on(false)
 			trees_sys.set_on(false)
 			trees_sys.set_impostors_on(false)
@@ -399,6 +430,14 @@ func _apply_variant(id: String) -> void:
 		"spray_off":
 			if air_sys != null:
 				air_sys.set_spray_on(false)
+		"fauna_off":
+			if fauna_sys != null:
+				fauna_sys.set_on(false)
+		"tod_night":
+			env_sys.set_tod("night")
+		"audio_off":
+			if audio_sys != null:
+				audio_sys.set_on(false)
 		"sky_flat":
 			env_sys.set_sky_flat(true)
 		"clouds_off":
