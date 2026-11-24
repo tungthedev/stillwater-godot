@@ -42,9 +42,9 @@ func _ready() -> void:
 	process_priority = 100
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/terrain.gdshader")
-	mat.set_shader_parameter("near_tex", ImageTexture.create_from_image(world.near_img))
-	mat.set_shader_parameter("far_tex", ImageTexture.create_from_image(world.far_img))
-	mat.set_shader_parameter("biome_tex", ImageTexture.create_from_image(world.biome_img))
+	mat.set_shader_parameter("near_tex", world.texture("near"))
+	mat.set_shader_parameter("far_tex", world.texture("far"))
+	mat.set_shader_parameter("biome_tex", world.texture("biome"))
 	mat.set_shader_parameter("noise_tex", world.noise_tex)
 	mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
 	mat.set_shader_parameter("near_size", world.near_size)

@@ -140,7 +140,7 @@ func _load_assets() -> void:
 	mid_mat.shader = tree_shader
 	for mat in [hero_mat, mid_mat]:
 		mat.set_shader_parameter("leaf_atlas", leaf_tex)
-		mat.set_shader_parameter("biome_tex", ImageTexture.create_from_image(world.biome_img))
+		mat.set_shader_parameter("biome_tex", world.texture("biome"))
 		mat.set_shader_parameter("near_size", world.near_size)
 		mat.set_shader_parameter("blend_start", world.blend_start)
 		mat.set_shader_parameter("blend_end", world.blend_end)

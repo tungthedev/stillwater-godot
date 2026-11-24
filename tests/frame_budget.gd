@@ -1,8 +1,10 @@
 extends SceneTree
 
-# Whole-frame budget at Stillwater's `low` tier for what the scene draws (terrain + trees + sky)
+# Whole-frame budget at Stillwater's `low` tier for what the scene draws (terrain + trees + grass
+# and flowers + sky)
 # at the bench poses on the iPhone's low-tier view (675 x 1130): 1.0 M triangles, 250 draw calls.
-# Terrain node selection and tree LOD / frustum counts are CPU-side, so this runs headless; the
+# Terrain node selection, tree LOD / frustum counts and grass tile rings are CPU-side, so this runs
+# headless (grass tiles count as baked; the bake itself needs a GPU); the
 # Web measurement (tools/measure_web.mjs) reports what the GPU actually got.
 # Run: godot --headless --path . -s tests/frame_budget.gd   (exit code 1 over budget)
 
@@ -30,6 +32,11 @@ func _init() -> void:
 	trees.set_script(load("res://systems/trees.gd"))
 	trees.setup(world)
 	vp.add_child(trees)
+	var grass := Node3D.new()
+	grass.set_script(load("res://systems/grass.gd"))
+	grass.setup(world)
+	vp.add_child(grass)
+	grass.set_process(false)
 	var cam := Camera3D.new()
 	vp.add_child(cam)
 	await process_frame
@@ -45,12 +52,13 @@ func _init() -> void:
 		var nodes: int = terrain.select(cam)
 		trees.update_lod(cam.position, true)
 		trees.count_drawn(cam)
-		var tris: int = nodes * terrain.tris_per_node + trees.last_tris
-		var draws: int = 1 + trees.last_draws + OTHER_DRAWS
-		var pass_: bool = tris <= TRIS and draws <= DRAWS and trees.last_tris > 0
+		grass.update_rings(cam, true)
+		var tris: int = nodes * terrain.tris_per_node + trees.last_tris + grass.last_tris
+		var draws: int = 1 + trees.last_draws + grass.last_draws + OTHER_DRAWS
+		var pass_: bool = tris <= TRIS and draws <= DRAWS and trees.last_tris > 0 and grass.grass.last_tris > 0 and grass.flowers.last_tris > 0
 		ok = ok and pass_
-		print("budget %s: terrain %d + trees %d = %d triangles, %d draws (trees %d; hero %d, mid %d, impostor %d trees) %s" % [
-			stop, nodes * terrain.tris_per_node, trees.last_tris, tris, draws, trees.last_draws,
-			trees.stats.hero, trees.stats.mid, trees.stats.impostor, "ok" if pass_ else "OVER"])
+		print("budget %s: terrain %d + trees %d + grass %d = %d triangles, %d draws (trees %d, grass %d; hero %d, mid %d, impostor %d trees; grass tiles %d near + %d far, flower tiles %d) %s" % [
+			stop, nodes * terrain.tris_per_node, trees.last_tris, grass.last_tris, tris, draws, trees.last_draws, grass.last_draws,
+			trees.stats.hero, trees.stats.mid, trees.stats.impostor, grass.grass.near_vis, grass.grass.far_vis, grass.flowers.near_vis, "ok" if pass_ else "OVER"])
 	print("FRAME_BUDGET %s (budget %d triangles, %d draws)" % ["PASS" if ok else "FAIL", TRIS, DRAWS])
 	quit(0 if ok else 1)

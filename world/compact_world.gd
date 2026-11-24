@@ -175,6 +175,18 @@ func biome_at(x: float, z: float) -> Dictionary:
 	return {"forest": biome_bytes[k] / 255.0, "flowers": biome_bytes[k + 1] / 255.0, "meadow": biome_bytes[k + 2] / 255.0}
 
 
+# GPU copies of the near / far height maps and the biome map, made once and shared by every
+# system that samples the world on the GPU.
+var _tex := {}
+
+
+func texture(which: String) -> ImageTexture:
+	if not _tex.has(which):
+		var img: Image = {"near": near_img, "far": far_img, "biome": biome_img}[which]
+		_tex[which] = ImageTexture.create_from_image(img)
+	return _tex[which]
+
+
 func pose(stop: String) -> Dictionary:
 	return meta.poses.stops[stop]
 

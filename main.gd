@@ -23,12 +23,14 @@ func _ready() -> void:
 	if _flag("notrees", "--no-trees"):
 		trees_sys.set_on(false)
 	var grass_sys := _add("grass", world)
-	if OS.get_cmdline_user_args().has("--no-grass"):
+	for m in grass_sys.materials():
+		env_sys.apply_to(m)
+	if _flag("nograss", "--no-grass"):
 		grass_sys.set_on(false)
 	var bench_sys := Node.new()
 	bench_sys.name = "bench"
 	bench_sys.set_script(load("res://systems/bench.gd"))
-	bench_sys.setup(terrain_sys, trees_sys)
+	bench_sys.setup(terrain_sys, trees_sys, grass_sys)
 	add_child(bench_sys)
 	var cam := Camera3D.new()
 	cam.name = "camera"
@@ -42,7 +44,7 @@ func _ready() -> void:
 	ui.set_script(load("res://systems/ui.gd"))
 	ui.setup(env_sys, grass_sys, bench_sys, cam, terrain_sys, trees_sys)
 	add_child(ui)
-	print("BUILD load_ms=%d scene_ms=%d trees_ms=%d trees=%s pose=%s" % [t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", cam.mode()])
+	print("BUILD load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s" % [t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode()])
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot="):
 			_shot(a.substr(7))

@@ -48,6 +48,18 @@ static func start_mode() -> String:
 	return ""
 
 
+# Look checks only: ?pitch=<rad> / `-- --pitch=<rad>` tilts a bench pose like Stillwater's
+# capture `&pitch=`, e.g. a close-up of the grass at the trailhead.
+static func _pitch_override() -> String:
+	if OS.has_feature("web"):
+		var v = JavaScriptBridge.eval("new URLSearchParams(location.search).get('pitch') || ''")
+		return str(v) if v != null else ""
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pitch="):
+			return a.substr(8)
+	return ""
+
+
 func mode() -> String:
 	return MODES[mode_i]
 
@@ -62,7 +74,8 @@ func set_mode(i: int) -> void:
 	if mode() != "walk":
 		var s: Dictionary = world.pose(mode())
 		position = Vector3(s.position[0], s.position[1], s.position[2])
-		rotation = Vector3(float(s.pitch), float(s.yaw), 0.0)
+		var pitch_over := _pitch_override()
+		rotation = Vector3(float(s.pitch) if pitch_over.is_empty() else float(pitch_over), float(s.yaw), 0.0)
 	else:
 		_walk_to(0.0)
 	mode_changed.emit(mode())

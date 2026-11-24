@@ -10,9 +10,12 @@ const WorldData := preload("res://world/world_data.gd")
 const HEIGHT_TOL := 1e-4
 const VALUE_TOL := 1e-5
 const CompactWorld := preload("res://world/compact_world.gd")
+const VegScatter := preload("res://world/veg_scatter.gd")
 const COMPACT_HEIGHT_TOL := 0.02
 
 var failures := 0
+# A runtime script error aborts a function without failing the run; this proves it finished.
+var veg_checked := false
 
 
 func _init() -> void:
@@ -129,6 +132,7 @@ func _init() -> void:
 		_fail("placement probe fields differ (%s)" % _sci(worst_probe))
 
 	_check_compact(samples, w)
+	_check_veg_scatter()
 
 	var mesh_files := 0
 	for m in w.meshes.meshes:
@@ -254,6 +258,32 @@ func _check_compact_trees(c: RefCounted, w: RefCounted) -> void:
 		_fail("tree pack kinds differ for %d trees" % kind_bad)
 
 
+# Grass and flower roots and randoms, every rank, against Stillwater's own generateTileScatter.
+func _check_veg_scatter() -> void:
+	var fx: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/valley/veg_fixture.json"))
+	for kind in ["grass", "flowers"]:
+		var L: Dictionary = fx[kind]
+		var got: Dictionary = VegScatter.generate(int(L.maxCount), float(L.tileSize), int(L.seed))
+		var gp: PackedInt64Array = got.packed
+		var want: Array = L.packed
+		var bad := 0
+		for k in want.size():
+			if gp[k] != int(want[k]):
+				bad += 1
+		print("%s scatter: %d ranks, %d of %d packed words differ from Stillwater" % [kind, int(L.maxCount), bad, want.size()])
+		if bad > 0 or gp.size() != want.size():
+			_fail("%s scatter differs from Stillwater in %d words" % [kind, bad])
+	var flip_bad := 0
+	for f in fx.flips:
+		var b := VegScatter.flip_bits(int(f.tx), int(f.tz))
+		if b.x != int(f.flipX) or b.y != int(f.flipZ):
+			flip_bad += 1
+	print("tile mirror bits: %d of %d differ" % [flip_bad, fx.flips.size()])
+	if flip_bad > 0:
+		_fail("tile mirror bits differ for %d tiles" % flip_bad)
+	veg_checked = true
+
+
 static func _sci(v: float) -> String:
 	return String.num_scientific(v)
 
@@ -264,5 +294,7 @@ func _fail(msg: String) -> void:
 
 
 func _finish() -> void:
+	if not veg_checked:
+		_fail("vegetation scatter check did not run to the end")
 	print("CHECK_WORLD %s (%d failures)" % ["PASS" if failures == 0 else "FAIL", failures])
 	quit(0 if failures == 0 else 1)

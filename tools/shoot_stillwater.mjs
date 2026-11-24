@@ -5,6 +5,8 @@
 //   BASE=http://127.0.0.1:<port>/ gpu-run node tools/shoot_stillwater.mjs [--stillwater <path>] [--out captures/slice2]
 //     [--keep trees,...]   leave these systems on (the ones Godot has drawn so far)
 //     [--shots-only]       only the reference frames: no light values, no sky LUT rewrite
+//     [--hide ferns,logs,shafts]  registry systems to hide at runtime (they have no ?no= switch)
+//     [--stops trailhead] [--add '&pitch=-0.45'] [--tag close]  a variant of some stops
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -19,6 +21,10 @@ const W = 675, H = 1130;
 // Everything that is not terrain or sky. Ferns, logs, light shafts and the stream have no switch.
 const KEEP = argVal('--keep', '').split(',').filter(Boolean);
 const SHOTS_ONLY = args.includes('--shots-only');
+const HIDE = argVal('--hide', '').split(',').filter(Boolean);
+const STOPS = argVal('--stops', '').split(',').filter(Boolean);
+const ADD = argVal('--add', '');
+const TAG = argVal('--tag', '');
 const NO = ['grass', 'trees', 'clouds', 'rocks', 'props', 'birds', 'motes', 'fly', 'spray', 'mist'].filter((s) => !KEEP.includes(s)).join(',');
 const poses = JSON.parse(fs.readFileSync(path.resolve('data/valley/poses.json'), 'utf8'));
 
@@ -28,15 +34,27 @@ console.log('renderer', renderer);
 fs.mkdirSync(OUT, { recursive: true });
 const values = {};
 try {
-  for (const stop of Object.values(poses.stops)) {
+  for (const stop of Object.values(poses.stops).filter((s) => !STOPS.length || STOPS.includes(s.name))) {
     const page = await browser.newPage();
     await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
-    const url = `${BASE}?capture&q=low&no=${NO}&${stop.query}`;
+    const url = `${BASE}?capture&q=low&no=${NO}&${stop.query}${ADD}`;
     await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    if (HIDE.length) {
+      // Capture mode stops drawing once the shot is ready, so hide them before its frames finish.
+      await page.waitForFunction('window.__game?.registry || window.__error', { timeout: 300000, polling: 50 });
+      const hidden = await page.evaluate((names) => names.map((n) => {
+        const inst = window.__game.registry.instance?.(n);
+        const objs = !inst ? [] : inst.isObject3D ? [inst] : ['mesh', 'group', 'points'].map((k) => inst[k]).filter((o) => o && 'visible' in o);
+        objs.forEach((o) => { o.visible = false; });
+        return `${n}:${objs.length}`;
+      }), HIDE);
+      const ready = await page.evaluate('window.__shotReady');
+      console.log('hidden', hidden.join(' '), ready ? '(TOO LATE: shot already taken)' : '');
+    }
     await page.waitForFunction('window.__shotReady || window.__error', { timeout: 300000, polling: 200 });
     const err = await page.evaluate('window.__error');
     if (err) throw new Error(err);
-    const file = path.join(OUT, `stillwater_${stop.name}.png`);
+    const file = path.join(OUT, `stillwater_${stop.name}${TAG ? '_' + TAG : ''}.png`);
     await page.screenshot({ path: file });
     console.log(stop.name, file);
     if (SHOTS_ONLY) {

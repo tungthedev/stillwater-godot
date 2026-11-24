@@ -104,6 +104,6 @@ func _refresh_buttons() -> void:
 
 func _process(_delta: float) -> void:
 	var px: Vector2 = Vector2(DisplayServer.window_get_size()) * float(scales[scale_i])
-	label.text = "%d fps\n%d x %d px 3D\n%d draws · %.2f M tris\nterrain %.2f M tris · %d nodes\ntrees %.2f M tris · %d draws" % [
+	label.text = "%d fps\n%d x %d px 3D\n%d draws · %.2f M tris\nterrain %.2f M tris · %d nodes\ntrees %.2f M tris · %d draws\ngrass %.2f M tris · %d draws" % [
 		Engine.get_frames_per_second(), px.x, px.y, bench_sys.last_draws, bench_sys.last_prims / 1.0e6,
-		terrain_sys.last_tris / 1.0e6, terrain_sys.last_nodes, trees_sys.last_tris / 1.0e6, trees_sys.last_draws]
+		terrain_sys.last_tris / 1.0e6, terrain_sys.last_nodes, trees_sys.last_tris / 1.0e6, trees_sys.last_draws, grass_sys.last_tris / 1.0e6, grass_sys.last_draws]
