@@ -86,3 +86,12 @@ The Godot build's buttons (and start-up flags) change cost; each run's panel rec
 | Shadow | `shadow` | off / on | Godot sun shadow map (nothing casts into it) |
 | Grass, Trees | `nograss`, `notrees` | on / off | Hide the system |
 | | `ldr` | | Force the 8-bit scene target (post off), for browsers without float colour buffers |
+
+## Known issue: terrain drops out while the camera moves (Godot, GPU Chrome)
+
+During the walk, terrain patches vanish in GPU Chrome and the gap shows sky; after about 30 s
+of walking most of the ground is gone (`captures/slice5/walk_bug/`, frames at 3, 10, 20, 30 s).
+The slice 4 build does the same, so it predates the post chain. The CPU side still selects about
+120 nodes, so the GPU draw loses them; desktop GL under llvmpipe draws them. Static poses
+(trailhead, forest) are not affected. Until it is fixed, the Godot walk stage draws less terrain
+than Stillwater's and its fps reads high.
