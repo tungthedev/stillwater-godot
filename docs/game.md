@@ -29,6 +29,10 @@ M (music). The clock stays at 16:00.
   through `session.interactables` (benches) and `player.colliders` / `player.ground_override`.
 - The pause sheet shows a Perf button where Stillwater shows the quality picker (only `low` exists).
 - Text shadows are a faint grown copy: Godot labels have no blurred shadow.
+- Pause freezes the walk, as in Stillwater; Q, Sit and the Trail button still toggle while paused
+  (Stillwater keeps those actions live on the pause sheet too) and take effect on resume.
+- After a Bench run from the pause sheet, the results panel sits over the sheet: Close, then tap to
+  continue.
 
 ## Check flags
 
@@ -42,6 +46,13 @@ M (music). The clock stays at 16:00.
 - `BASE=... gpu-run node tools/free_walk_check.mjs --build w1-1`: four legs with real input (keys
   with Shift through the meadow, the Trail button through the forest, the stick up a slope and into
   the east edge); fails on too little ground covered, sky below the horizon, repeated script frames
-  over 5 ms in terrain, trees or grass (or one over 10 ms), leaving the boundary, page errors.
+  over 5 ms in terrain, trees or grass (or one over 10 ms), leaving the boundary, page errors. A
+  single frame between 5 and 10 ms only warns, which is looser than a flat 5 ms limit; it measures
+  script time only, not GPU upload or bake gaps.
+- `BASE=... gpu-run node tools/game_ui_check.mjs --build w1-1`: touch on the phone view: pause holds
+  the walker still, two thumbs walk and look at once (lifting one keeps the other), Perf on the
+  pause sheet shows the levers and runs Bench from the game, `?debug` shows them at load, and the
+  HUD stays inside injected iPhone safe-area insets (portrait at load, landscape on a resize).
+  Control rects and state come from `window.__ui` (`?walklog`).
 - `GODOT=... STILLWATER=... gpu-run node tools/game_shots.mjs`: title, place card, walking and pause
   at the same moments in both games, phone portrait, phone landscape and desktop.

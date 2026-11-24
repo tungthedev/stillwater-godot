@@ -113,6 +113,7 @@ func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: 
 		log.systems = bench_sys.profiled
 		log.session = session
 		log.player = player
+		log.ui = ui
 		add_child(log)
 
 

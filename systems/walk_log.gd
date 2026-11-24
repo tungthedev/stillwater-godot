@@ -8,6 +8,7 @@ extends Node
 var systems := {}
 var session: Node
 var player: Node
+var ui: Node
 var frames := 0
 var t := 0.0
 var sum_frame := 0.0
@@ -33,6 +34,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_publish_ui(delta)
 	if session.mode != "play" or session.paused or session.fade < 0.95:
 		return
 	frames += 1
@@ -66,7 +68,8 @@ func _process(delta: float) -> void:
 			else:
 				over[k] = over.get(k, 0) + 1
 				var push = systems[k].get("push_us")
-				spikes.append({"sys": k, "ms": snappedf(us / 1000.0, 0.01), "upload_ms": snappedf((push if push != null else 0) / 1000.0, 0.01), "t": snappedf(t, 0.01)})
+				var det = systems[k].get("detail")
+				spikes.append({"sys": k, "ms": snappedf(us / 1000.0, 0.01), "upload_ms": snappedf((push if push != null else 0) / 1000.0, 0.01), "t": snappedf(t, 0.01), "detail": det if det != null else {}})
 				if us > worst.get(k, 0):
 					worst[k] = us
 			continue
@@ -90,6 +93,28 @@ func _process(delta: float) -> void:
 			JavaScriptBridge.eval("window.__walk = %s;" % line)
 		else:
 			print("WALK " + line)
+
+
+# State and control rects in every mode (title, pause, bench), so a check can tap the pause
+# sheet, the perf levers and Bench, and see what they did.
+var _ui_t := 0.0
+func _publish_ui(delta: float) -> void:
+	_ui_t -= delta
+	if _ui_t > 0.0 or not OS.has_feature("web"):
+		return
+	_ui_t = 0.25
+	var h: CanvasLayer = session.hud
+	var s := {
+		"mode": session.mode, "paused": session.paused, "fade": snappedf(session.fade, 0.01),
+		"distance": snappedf(player.distance, 0.01), "yaw": snappedf(player.yaw, 0.001), "auto_walk": player.auto_walk,
+		"dev_on": ui.dev_on, "dev_grid": ui.grid.is_visible_in_tree(), "bench_running": ui.bench_sys.running,
+		"bench_done": ui.panel.visible, "grass_on": ui.grass_sys.is_on(), "hud_visible": h.visible,
+		"safe": [h.safe.x, h.safe.y, h.safe.z, h.safe.w],
+		"pause_btn": _rect(h.pause_btn), "perf_btn": _rect(h.dev_btn), "resume_btn": _rect(h.resume_btn),
+		"trail_btn": _rect(h.btn.autoWalk), "sit_btn": _rect(h.btn.sit), "compass": _rect(h.compass) if h.get("compass") is Control else [],
+		"lever_grass": _rect(ui.btn.grass), "lever_bench": _rect(ui.btn.bench), "panel_close": _rect(ui.btn.panel_close),
+	}
+	JavaScriptBridge.eval("window.__ui = %s;" % JSON.stringify(s))
 
 
 static func _rect(c: Control) -> Array:

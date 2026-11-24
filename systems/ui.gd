@@ -238,6 +238,7 @@ func _build_panel() -> void:
 		b.add_theme_font_size_override("font_size", 15)
 		b.pressed.connect(pair[1])
 		row.add_child(b)
+		btn["panel_" + pair[0].to_lower().replace(" ", "_")] = b
 	outer.add_child(row)
 	add_child(panel)
 

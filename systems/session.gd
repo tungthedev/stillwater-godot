@@ -105,6 +105,7 @@ func start_game() -> void:
 
 func set_paused(v: bool) -> void:
 	paused = v
+	player.paused = v
 	_sync_input()
 	hud.set_paused(v)
 

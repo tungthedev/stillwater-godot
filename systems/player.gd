@@ -64,6 +64,8 @@ var _warned_until := -1.0
 
 # Driving the camera: off while the bench or the title camera owns it.
 var drive := false
+# Paused: the simulation holds still (Stillwater's loop skips the sim while paused).
+var paused := false
 var _acc := 0.0
 var _prev_pos := Vector3.ZERO
 var _prev_q := Quaternion.IDENTITY
@@ -154,7 +156,7 @@ func snap() -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if drive:
+	if drive and not paused:
 		_acc += minf(MAX_FRAME_DT, delta)
 		while _acc >= FIXED_DT:
 			_prev_pos = _cur_pos

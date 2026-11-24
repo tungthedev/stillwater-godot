@@ -74,7 +74,8 @@ try {
         for (let i = 1; i <= 8; i++) { await touch('touchMove', [[1, sx, sy - i * 6]]); await sleep(16); }
         await touch('touchStart', [[1, sx, sy - 48], [2, W * 0.75, H * 0.5]]);
         for (let i = 1; i <= 10; i++) { await touch('touchMove', [[1, sx, sy - 48], [2, W * 0.75 + i * 4, H * 0.5]]); await sleep(16); }
-        await touch('touchEnd', [[1, sx, sy - 48]]);
+        // CDP touchEnd releases the points it lists: lift the look thumb, keep the stick down.
+        await touch('touchEnd', [[2, W * 0.75 + 40, H * 0.5]]);
         await sleep(6000);
         await shot('walk');
         await touch('touchEnd', []);

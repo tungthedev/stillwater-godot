@@ -37,6 +37,8 @@ const FLOWERS := {
 	"near_tris": 4, "far_tris": 4,
 	"pad_xz": 0.9, "pad_down": 0.5, "pad_up": 2.0, "empty_below": 0.2,
 }
+# Grass and flowers each enter tiles; this per-ring time budget keeps the pair under ~2 ms.
+const ENTER_BUDGET_US := 900
 const NEW_TILES_PER_FRAME := 4
 # Height in the atlas is 16 bits over 64 m above this much under the tile's lowest sample.
 const BASE_DROP := 4.0
@@ -51,6 +53,8 @@ var last_draws := 0
 var density := 1.0
 var prof_us := 0
 var push_us := 0
+# This frame's work, for walk checks: tiles that entered, ring selection and entry time.
+var detail := {}
 
 
 func setup(w: RefCounted) -> void:
@@ -127,6 +131,7 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
 	push_us = grass.push_us + flowers.push_us
+	detail = {"grass_new": grass.added, "flower_new": flowers.added, "ring_us": grass.ring_us + flowers.ring_us, "enter_us": grass.enter_us + flowers.enter_us}
 
 
 # Stillwater's bladeGeometry(segs) for every rank below `count`, merged into one tile mesh.
@@ -233,6 +238,9 @@ class Ring:
 	var draw_near := 0
 	var draw_far := 0
 	var push_us := 0
+	var added := 0
+	var ring_us := 0
+	var enter_us := 0
 	var baking_n := 0
 
 	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
@@ -332,19 +340,22 @@ class Ring:
 					s.ready = true
 					baking_n -= 1
 					_write_slot(s)
+		var tr := Time.get_ticks_usec()
 		var tiles := _ring(cam.x, cam.z)
+		ring_us = Time.get_ticks_usec() - tr
 		var active := {}
 		for t in tiles:
 			active[t.key] = true
 		var bake_any := false
-		var added := 0
+		added = 0
+		var te := Time.get_ticks_usec()
 		for t in tiles:
 			if by_key.has(t.key):
 				continue
 			# Tiles enter nearest first and at most NEW_TILES_PER_FRAME a frame, so a walk across a
 			# tile row (or a teleport) spreads its ground sampling and bakes over a few frames; the
 			# ones left wait at the ring's edge, where blades are thinnest. Headless counts fill at once.
-			if added >= NEW_TILES_PER_FRAME and not assume_baked:
+			if not assume_baked and (added >= NEW_TILES_PER_FRAME or (added > 0 and Time.get_ticks_usec() - te > ENTER_BUDGET_US)):
 				break
 			added += 1
 			var s := _evict(active, cam.x, cam.z)
@@ -360,6 +371,7 @@ class Ring:
 					baking_n += 1
 				bake_any = bake_any or s.baking
 			_write_slot(s)
+		enter_us = Time.get_ticks_usec() - te
 		if bake_any:
 			vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		var tu := Time.get_ticks_usec()
