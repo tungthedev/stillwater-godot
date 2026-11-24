@@ -64,6 +64,7 @@ var mats: Array[ShaderMaterial] = []
 var post_on := false
 var sky_flat := false
 var cirrus_on := true
+var frozen := false
 
 
 func _init() -> void:
@@ -221,9 +222,14 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 var prof_us := 0
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 

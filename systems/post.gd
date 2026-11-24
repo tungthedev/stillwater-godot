@@ -41,6 +41,7 @@ var internal := Vector2i(16, 16)
 var scale := TIER_SCALE
 var scale_mult := 1.0
 var fx := true
+var frozen := false
 
 
 func setup(env_node: Node, float_targets: bool) -> void:
@@ -219,9 +220,14 @@ func _sharpen() -> float:
 var prof_us := 0
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 

@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "s1-sweep"
+const BUILD := "s1-sweep2"
 
 
 func _ready() -> void:
@@ -83,7 +83,7 @@ func _ready() -> void:
 	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
 	bench_sys.profiled = {"terrain": terrain_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
 	if sweep_sys != null:
-		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "settings": ui.settings})
+		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "ui": ui, "bench": bench_sys, "settings": ui.settings})
 	add_child(ui)
 	if game:
 		_add_game(world, scene, cam, bench_sys, ui, env_sys)

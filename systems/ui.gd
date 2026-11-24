@@ -30,6 +30,7 @@ var game := false
 var dev_on := true
 var _showing_sweep := false
 var _panel_sb: StyleBoxFlat
+var frozen := false
 
 var dist_i := 0
 var dens_i := 0
@@ -273,7 +274,8 @@ func _build_panel() -> void:
 const WIDTHS_FPS := [78, 44, 50, 50, 56, 44]
 # Fits the 354 pt inside of the panel on a 390 pt wide phone.
 const WIDTHS_MS := [60, 58, 58, 60, 54, 46]
-const WIDTHS_SWEEP := [126, 62, 68, 66]
+# 7 compact columns (332 + 12 = 344 pt) fit inside a 375 pt iPhone mini panel (355 pt inner).
+const WIDTHS_SWEEP := [94, 40, 44, 38, 40, 40, 36]
 
 
 func _row(cells: Array, size: int, col: Color, widths: Array = WIDTHS_FPS) -> HBoxContainer:
@@ -302,9 +304,14 @@ func _text(t: String, size: int, col: Color) -> Label:
 func _show_results(r: Dictionary) -> void:
 	_showing_sweep = false
 	_panel_sb.set_content_margin_all(12)
+	panel.offset_left = 6
+	panel.offset_right = -6
 	panel.offset_top = 40
 	panel.offset_bottom = grid.offset_top - 8
 	panel_box.add_theme_constant_override("separation", 5)
+	for bk in ["panel_close", "panel_run_again"]:
+		if btn.has(bk):
+			(btn[bk] as Button).custom_minimum_size = Vector2(0, 40)
 	for c in panel_box.get_children():
 		c.queue_free()
 	var ok: bool = float(r.worst_fps) >= 30.0
@@ -383,38 +390,60 @@ func _show_sweep_results(r: Dictionary) -> void:
 	for c in panel_box.get_children():
 		c.queue_free()
 	var safe := _read_safe()
-	_panel_sb.set_content_margin_all(8)
-	panel.offset_top = maxf(6.0, safe.x + 2.0)
-	panel.offset_bottom = -maxf(6.0, safe.z + 2.0)
-	panel_box.add_theme_constant_override("separation", 3)
-	panel_box.add_child(_text("GPU Sweep %s  ·  %.0fs" % [str(r.build), float(r.total_s)], 14, Color.WHITE))
+	_panel_sb.set_content_margin_all(6)
+	panel.offset_left = 4
+	panel.offset_right = -4
+	panel.offset_top = maxf(4.0, safe.x + 2.0)
+	panel.offset_bottom = -maxf(4.0, safe.z + 2.0)
+	panel_box.add_theme_constant_override("separation", 2)
+	for bk in ["panel_close", "panel_run_again"]:
+		if btn.has(bk):
+			(btn[bk] as Button).custom_minimum_size = Vector2(0, 30)
+	var notes: Array = r.get("notes", [])
+	var note_s := (" · " + ", ".join(PackedStringArray(notes))) if not notes.is_empty() else ""
+	panel_box.add_child(_text("GPU Sweep %s · %.0fs%s" % [str(r.build), float(r.total_s), note_s], 12, Color.WHITE))
 	panel_box.add_child(_text("%dx%d of %dx%d (dpr %s) · post %s · %s · %s" % [
 		int(r.internal[0]), int(r.internal[1]), int(r.screen[0]), int(r.screen[1]),
-		str(r.dpr), "on" if r.post else "off", str(r.target), str(r.style)], 10, Color(0.84, 0.87, 0.92)))
-	panel_box.add_child(_text("GPU: %s" % str(r.renderer), 10, Color(0.68, 0.72, 0.78)))
+		str(r.dpr), "on" if r.post else "off", str(r.target), str(r.style)], 9, Color(0.84, 0.87, 0.92)))
+	panel_box.add_child(_text("GPU: %s" % str(r.renderer), 9, Color(0.68, 0.72, 0.78)))
 	for p_any in r.poses:
 		var p: Dictionary = p_any
 		var drift: float = float(p.drift_ms)
-		var hdr := "%s  base %.1f -> %.1f ms (%+.1f drift) · sum %.1f ms (%.0f%%)" % [
+		var hdr := "%s base %.1f->%.1f (%+.1f) cpu %s raf %s prc %.1f phy %.1f" % [
 			str(p.pose).capitalize(), float(p.base_start_ms), float(p.base_end_ms), drift,
-			-float(p.additive_save_ms), -float(p.additive_share_pct)]
-		panel_box.add_child(_text(hdr, 11, Color(0.96, 0.90, 0.62)))
+			_opt_ms(p.get("base_raf_cpu_ms", -1.0)), _opt_ms(p.get("base_raf_iv_ms", -1.0)),
+			float(p.get("base_proc_ms", 0.0)), float(p.get("base_phys_ms", 0.0))]
+		panel_box.add_child(_text(hdr, 9, Color(0.96, 0.90, 0.62)))
 		var tbl := VBoxContainer.new()
-		tbl.add_theme_constant_override("separation", 1)
-		tbl.add_child(_row(["variant", "med ms", "Δ base", "% base"], 10, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
+		tbl.add_theme_constant_override("separation", 0)
+		tbl.add_child(_row(["variant", "med", "Δms", "%", "cpu", "raf", "prc"], 9, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
 		for v_any in p.variants:
 			var v: Dictionary = v_any
 			var d: float = float(v.delta_ms)
 			var col := Color(0.55, 0.95, 0.6) if d <= -0.8 else (Color(1.0, 0.62, 0.48) if d >= 0.8 else Color(0.92, 0.93, 0.95))
-			tbl.add_child(_row([str(v.label), "%.1f" % float(v.median_ms), "%+.1f" % d, "%+.0f%%" % float(v.delta_pct)], 11, col, WIDTHS_SWEEP))
+			tbl.add_child(_row([
+				str(v.label), "%.1f" % float(v.median_ms), "%+.1f" % d, "%+.0f%%" % float(v.delta_pct),
+				_opt_ms(v.get("raf_cpu_ms", -1.0)), _opt_ms(v.get("raf_iv_ms", -1.0)),
+				"%.1f" % float(v.get("proc_ms", 0.0))], 10, col, WIDTHS_SWEEP))
 		panel_box.add_child(tbl)
-	var skipped: Array = r.get("skipped", [])
-	if not skipped.is_empty():
-		panel_box.add_child(_text("Skipped: " + ", ".join(PackedStringArray(skipped)), 10, Color(0.68, 0.72, 0.78)))
 	dev_on = true
 	panel.visible = true
 	_show_dev()
 	_refresh()
+
+
+static func _opt_ms(v) -> String:
+	var f := float(v)
+	return "%.1f" % f if f >= 0.0 else "-"
+
+
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
+func set_progress_text(t: String) -> void:
+	if progress != null:
+		progress.text = t
 
 
 func _read_safe() -> Vector4:
@@ -434,9 +463,14 @@ func _close_panel() -> void:
 	if _showing_sweep:
 		_showing_sweep = false
 		_panel_sb.set_content_margin_all(12)
+		panel.offset_left = 6
+		panel.offset_right = -6
 		panel.offset_top = 40
 		panel.offset_bottom = grid.offset_top - 8
 		panel_box.add_theme_constant_override("separation", 5)
+		for bk in ["panel_close", "panel_run_again"]:
+			if btn.has(bk):
+				(btn[bk] as Button).custom_minimum_size = Vector2(0, 40)
 		_show_dev()
 
 
@@ -452,7 +486,8 @@ var prof_us := 0
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 

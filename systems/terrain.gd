@@ -24,6 +24,8 @@ var world: RefCounted
 var mat: ShaderMaterial
 var flat_mat: ShaderMaterial
 var flat_on := false
+var on := true
+var frozen := false
 var draw: SwapMultiMesh
 var buf := PackedFloat32Array()
 var tris_per_node := 0
@@ -111,6 +113,22 @@ func set_flat(on: bool) -> void:
 		mmi.material_override = flat_mat if on else null
 
 
+func set_on(v: bool) -> void:
+	on = v
+	draw.set_visible(v)
+	if not v:
+		last_nodes = 0
+		last_tris = 0
+
+
+func is_on() -> bool:
+	return on
+
+
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 # Grid of (N + 1)^2 vertices in [0, 1]^2 with alternating diagonals, plus a ring of skirt
 # vertices (UV.x = 1) that the shader drops below the edge.
 func _patch_mesh(n: int) -> ArrayMesh:
@@ -171,7 +189,7 @@ func _patch_mesh(n: int) -> ArrayMesh:
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
-	if cam != null:
+	if on and not frozen and cam != null:
 		select(cam)
 	prof_us = Time.get_ticks_usec() - t0
 

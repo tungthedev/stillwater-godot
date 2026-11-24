@@ -50,6 +50,7 @@ var flowers: Ring
 var _on := true
 var _grass_on := true
 var _flowers_on := true
+var frozen := false
 var _frame := 0
 var last_tris := 0
 var last_draws := 0
@@ -140,11 +141,15 @@ func _sync_ring_vis() -> void:
 	flowers.draw_f.set_visible(f_vis)
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
 	push_us = 0
-	if _on and cam != null:
+	if _on and not frozen and cam != null:
 		_frame += 1
 		update_rings(cam, false)
 	prof_us = Time.get_ticks_usec() - t0
