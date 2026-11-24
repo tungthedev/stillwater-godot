@@ -1,7 +1,8 @@
 // Bakes the far-tree impostor atlas with Stillwater's own baker (bakeImpostorAtlas in
-// src/world/treeImpostor.js) in GPU Chrome, from the same hero meshes and atlas size the game
-// uses at the low tier, and reads it back so Godot ships the identical atlas instead of baking
-// its own at load. Also writes the leaf card atlas (fluffyAtlas) the tree meshes sample.
+// src/world/treeImpostor.js) in GPU Chrome, from the same near-mid (mid1) meshes and atlas size
+// Stillwater main uses at the low tier, and reads it back so Godot ships the identical atlas.
+// Also writes the leaf card atlas (fluffyAtlas) with dilated transparent-border RGB so mipmaps
+// and linear filtering never pull dark fringes onto leaf card cutouts.
 //
 // Outputs (data/trees/):
 //   impostor_albedo.pngdata  RGBA8, gamma-2 albedo premultiplied by coverage (as baked)
@@ -13,7 +14,6 @@
 // Usage: gpu-run node tools/bake_impostors.mjs [--stillwater <path>]
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { encodePng } from './png.mjs';
 
@@ -27,10 +27,12 @@ const SW = path.resolve(argVal('--stillwater', '/home/hoalong/Projects/stillwate
 const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/valley/meta.json'), 'utf8'));
 const meshes = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/valley/meshes.json'), 'utf8'));
 const tier = meta.tiers.low;
-const heroLod = tier.treeDetail >= 2 ? 'hero2' : 'hero1';
+// Stillwater trees.js bakes impostors from midGeoFine (mid1: near-mid fringe crowns).
+const bakeLod = 'mid1';
 // Bushes have no impostor (trees.js KINDS imp = -1); the rest keep their order (imp index).
 const IMP_KINDS = [0, 1, 2, 4, 5];
-const heroMeshes = IMP_KINDS.map((v) => meshes.meshes.find((m) => m.kind === v && m.lod === heroLod));
+const bakeMeshes = IMP_KINDS.map((v) => meshes.meshes.find((m) => m.kind === v && m.lod === bakeLod));
+if (bakeMeshes.some((m) => !m)) throw new Error(`missing ${bakeLod} mesh in data/valley/meshes.json`);
 
 const { launchBrowser } = await import(pathToFileURL(path.join(SW, 'tools/chrome.mjs')).href);
 const ORIGIN = 'http://stillwater.local';
@@ -61,7 +63,92 @@ try {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 64;
     const renderer = new THREE.WebGLRenderer({ canvas });
-    const leaf = fluffy.fluffyAtlas();
+    const leafCanvas = fluffy.fluffyAtlas();
+    // Dilate opaque leaf-edge RGB outward into the transparent background of the card region
+    // (u < 0.76) so bilinear filtering and mipmaps never pull dark grey into leaf cutout edges.
+    // Keep the dilated RGBA buffer directly (Canvas2D putImageData premultiplies and zeroes RGB
+    // where alpha == 0), and wrap it in a DataTexture for the impostor baker too.
+    let leafRgba;
+    let leafW, leafH;
+    let leaf;
+    {
+      const c = leafCanvas.image;
+      const W = c.width, H = c.height;
+      leafW = W; leafH = H;
+      const cardW = Math.floor(W * 0.76);
+      const ctx = c.getContext('2d');
+      const img = ctx.getImageData(0, 0, W, H);
+      const d = img.data;
+      const valid = new Uint8Array(cardW * H);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < cardW; x++) {
+          const o = (y * W + x) * 4;
+          if (d[o + 3] <= 6) d[o + 3] = 0;
+          if (d[o + 3] >= 120) valid[y * cardW + x] = 1;
+        }
+      }
+      const nextValid = new Uint8Array(valid);
+      const tmp = new Uint8Array(cardW * H * 3);
+      for (let pass = 0; pass < 24; pass++) {
+        let changed = 0;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < cardW; x++) {
+            const idx = y * cardW + x;
+            if (valid[idx]) continue;
+            let sr = 0, sg = 0, sb = 0, cnt = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              const ny = y + dy;
+              if (ny < 0 || ny >= H) continue;
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= cardW) continue;
+                if (valid[ny * cardW + nx]) {
+                  const no = (ny * W + nx) * 4;
+                  sr += d[no]; sg += d[no + 1]; sb += d[no + 2]; cnt++;
+                }
+              }
+            }
+            if (cnt > 0) {
+              tmp[idx * 3] = Math.round(sr / cnt);
+              tmp[idx * 3 + 1] = Math.round(sg / cnt);
+              tmp[idx * 3 + 2] = Math.round(sb / cnt);
+              nextValid[idx] = 1;
+              changed++;
+            }
+          }
+        }
+        if (!changed) break;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < cardW; x++) {
+            const idx = y * cardW + x;
+            if (!valid[idx] && nextValid[idx]) {
+              const o = (y * W + x) * 4;
+              d[o] = tmp[idx * 3];
+              d[o + 1] = tmp[idx * 3 + 1];
+              d[o + 2] = tmp[idx * 3 + 2];
+              valid[idx] = 1;
+            }
+          }
+        }
+      }
+      // Fill any remaining distant transparent texels with bright outer-leaf tone.
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < cardW; x++) {
+          if (!valid[y * cardW + x]) {
+            const o = (y * W + x) * 4;
+            d[o] = 236; d[o + 1] = 244; d[o + 2] = 224;
+          }
+        }
+      }
+      leafRgba = Array.from(d);
+      leaf = new THREE.DataTexture(new Uint8Array(d), W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+      leaf.colorSpace = THREE.SRGBColorSpace;
+      leaf.flipY = true;
+      leaf.generateMipmaps = true;
+      leaf.minFilter = THREE.LinearMipmapLinearFilter;
+      leaf.magFilter = THREE.LinearFilter;
+      leaf.needsUpdate = true;
+    }
     const geos = specs.map((m) => fluffy[m.generator](m.seed, m.options));
     const imp = bakeImpostorAtlas(renderer, geos, leaf, size);
     // Copy mip 0 of each baked texture into a readable RGBA8 target, texel for texel.
@@ -90,10 +177,10 @@ try {
       normal: read(imp.normal),
       frames: imp.frames.map((f) => [f.x, f.y, f.z, f.w]),
       grid: [imp.grid.x, imp.grid.y, imp.grid.z, imp.grid.w],
-      leafPng: leaf.image.toDataURL('image/png'),
-      leafSize: [leaf.image.width, leaf.image.height],
+      leafRgba,
+      leafSize: [leafW, leafH],
     };
-  }, heroMeshes, tier.treeAtlas);
+  }, bakeMeshes, tier.treeAtlas);
 } finally {
   await browser.close();
 }
@@ -106,13 +193,15 @@ let covered = 0;
 for (let i = 3; i < albedo.length; i += 4) if (albedo[i] > 0) covered++;
 fs.writeFileSync(path.join(OUT, 'impostor_albedo.pngdata'), encodePng(size, size, 4, albedo));
 fs.writeFileSync(path.join(OUT, 'impostor_normal.pngdata'), encodePng(size, size, 4, normal));
-fs.writeFileSync(path.join(OUT, 'leaf_atlas.pngdata'), Buffer.from(result.leafPng.split(',')[1], 'base64'));
+// Encode leaf_atlas directly from RGBA ImageData so transparent pixels preserve their dilated RGB
+// (Canvas toDataURL premultiplies alpha and zeroes RGB where alpha == 0).
+fs.writeFileSync(path.join(OUT, 'leaf_atlas.pngdata'), encodePng(result.leafSize[0], result.leafSize[1], 4, Buffer.from(result.leafRgba)));
 const info = {
   stillwaterCommit: meta.stillwaterCommit,
   tier: 'low',
   size,
-  heroLod,
-  species: IMP_KINDS.map((v, i) => ({ imp: i, kind: v, mesh: heroMeshes[i].file })),
+  bakeLod,
+  species: IMP_KINDS.map((v, i) => ({ imp: i, kind: v, mesh: bakeMeshes[i].file })),
   frames: result.frames,
   grid: result.grid,
   gridRule: 'x columns, y tile size / atlas size, z pad / tile size, w max mip level (treeImpostor.js uImpGrid)',
@@ -121,4 +210,4 @@ const info = {
   coverage: covered / (size * size),
 };
 fs.writeFileSync(path.join(OUT, 'impostors.json'), JSON.stringify(info, null, 1) + '\n');
-console.log(`impostor atlas ${size}px, ${IMP_KINDS.length} species from ${heroLod}, coverage ${(info.coverage * 100).toFixed(1)}%, grid ${info.grid.map((v) => +v.toFixed(4)).join(', ')}`);
+console.log(`impostor atlas ${size}px, ${IMP_KINDS.length} species from ${bakeLod}, coverage ${(info.coverage * 100).toFixed(1)}%, grid ${info.grid.map((v) => +v.toFixed(4)).join(', ')}`);

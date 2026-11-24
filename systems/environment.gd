@@ -37,6 +37,10 @@ const PAINTERLY_TRICKS: Array[String] = [
 	"matte",
 	"horizon_fog",
 	"painted_clouds",
+	"tree_cores_first",
+	"card_edge_fade",
+	"cheap_bark",
+	"puff_mid_crowns",
 ]
 
 var style := "painterly"

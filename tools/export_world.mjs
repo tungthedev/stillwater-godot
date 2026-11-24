@@ -153,6 +153,7 @@ for (const name of TIER_NAMES) {
     treeDetail: q.treeDetail,
     treeHeroR: q.treeHeroR,
     treeMidR: q.treeMidR,
+    treeMidFineR: q.treeMidFineR ?? 0,
     treeBushR: q.treeBushR,
     treeAtlas: q.treeAtlas,
     treeShadows: q.treeShadows,
@@ -280,11 +281,13 @@ json('poses.json', poses);
 
 // ---------- tree meshes ----------
 // Mirrors KINDS in src/world/trees.js (index = placement kind v): hero1 is the hero level when
-// treeDetail is 1 (low tier), hero2 when it is 2; mid is the 64 m-cell level (sparse leaf cards).
-// Far trees are impostors baked from the hero level (tools/bake_impostors.mjs).
+// treeDetail is 1 (low tier), hero2 when it is 2; mid0 is the far 64 m-cell level (20-face opaque
+// puffs, no leaf cards); mid1 is the near 64 m-cell level (within treeMidFineR: hero-lod1 trunk +
+// 20-face indexed inner core + fringe leaf cards per clump, 8 broadleaf / 6 pine-larch-bush).
+// Far trees are impostors baked from mid1 (tools/bake_impostors.mjs).
 const KINDS = [
   { name: 'oak',    bb: 0, gen: 'fluffyBroadleaf', seed: 11, hero: { kind: 'oak',    color: [0.13, 0.39, 0.075] }, mid: { kind: 'oak',    color: [0.13, 0.39, 0.075] } },
-  { name: 'round',  bb: 0, gen: 'fluffyBroadleaf', seed: 23, hero: { kind: 'round',  color: [0.16, 0.42, 0.09] },  mid: { kind: 'round',  color: [0.18, 0.43, 0.09] } },
+  { name: 'round',  bb: 0, gen: 'fluffyBroadleaf', seed: 23, hero: { kind: 'round',  color: [0.16, 0.42, 0.09] },  mid: { kind: 'round',  color: [0.16, 0.42, 0.09] } },
   { name: 'pine',   bb: 1, gen: 'fluffyPine',      seed: 37, hero: { color: [0.065, 0.24, 0.10] },                  mid: { color: [0.065, 0.24, 0.10] } },
   { name: 'bush',   bb: 0, gen: 'fluffyBush',      seed: 61, hero: {},                                              mid: {} },
   { name: 'poplar', bb: 2, gen: 'fluffyBroadleaf', seed: 51, hero: { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67] }, mid: { kind: 'poplar', color: [0.18, 0.46, 0.10], bark: [0.76, 0.73, 0.67] } },
@@ -293,7 +296,15 @@ const KINDS = [
 for (const k of KINDS) {
   k.hero1 = [k.gen, k.seed, { ...k.hero, lod: 1 }];
   k.hero2 = [k.gen, k.seed, { ...k.hero, lod: 2 }];
-  k.midMesh = [k.gen, k.seed, { ...k.mid, lod: 0, lowPoly: true, sparse: true }];
+  // Far-mid opaque puffs: 80-face indexed spheres (puffs: 1) on tall trees so conifers and oaks
+  // read as soft rounded volumes with zero boxy facets; tiny shrubs keep 20-face puffs (puffs: 0).
+  const midPuffs = k.name === 'bush' ? 0 : 1;
+  k.mid0 = [k.gen, k.seed, { ...k.mid, lod: 0, lowPoly: true, sparse: true, puffs: midPuffs, fringe: 0, trunkLod: 0 }];
+  // Near-mid (within treeMidFineR): 20-face indexed inner core tucked inside lush fringe cards +
+  // hero-lod1 trunk. Conifers get 9 cards/clump so drooping tiers stay full; broadleaf get 8;
+  // mid bushes draw as 1-surface opaque mid0 puffs.
+  const midFringe = k.name === 'bush' ? 0 : (k.gen === 'fluffyBroadleaf' ? 8 : 9);
+  k.mid1 = [k.gen, k.seed, { ...k.mid, lod: 0, lowPoly: true, sparse: true, puffs: 0, fringe: midFringe, trunkLod: 1 }];
 }
 const HERO = ['fluffyBroadleaf', 121, { kind: 'oak', color: [0.12, 0.37, 0.072] }];
 const ATTRS = [['position', 'position', 3], ['normal', 'normal', 3], ['uv', 'uv', 2], ['color', 'color', 3], ['crown', 'aCrown', 3]];
@@ -333,7 +344,8 @@ const exportMesh = (file, kindIndex, lod, [fn, seed, opts]) => {
 KINDS.forEach((k, v) => {
   exportMesh(`${k.name}_hero1`, v, 'hero1', k.hero1);
   exportMesh(`${k.name}_hero2`, v, 'hero2', k.hero2);
-  exportMesh(`${k.name}_mid`, v, 'mid', k.midMesh);
+  exportMesh(`${k.name}_mid0`, v, 'mid0', k.mid0);
+  exportMesh(`${k.name}_mid1`, v, 'mid1', k.mid1);
 });
 exportMesh('hero_oak', 0, 'hero', HERO);
 json('meshes.json', {
@@ -423,4 +435,6 @@ for (const s of Object.values(poses.stops)) console.log(`  pose ${s.name}: pos $
 {
   const r = spawnSync(process.execPath, [path.join(HERE, 'export_web.mjs')], { stdio: 'inherit' });
   if (r.status !== 0) throw new Error(`export_web failed (exit ${r.status})`);
+  const rv = spawnSync(process.execPath, [path.join(HERE, 'export_veg_fixture.mjs'), '--stillwater', SW], { stdio: 'inherit', cwd: ROOT });
+  if (rv.status !== 0) throw new Error(`export_veg_fixture failed (exit ${rv.status})`);
 }

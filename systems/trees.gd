@@ -2,10 +2,13 @@ extends Node3D
 
 # Stillwater's trees at the low tier (src/world/trees.js, treeChunks.js, treeImpostor.js):
 #   hero      32 m cells whose nearest point is within treeHeroR of the camera, hero meshes
-#   mid       64 m cells within treeMidR, sparse leaf-card meshes; trees in an active hero cell
-#             are hidden in the mid shader
+#   mid       64 m cells within treeMidR: near cells (< treeMidFineR) draw mid1 (hero-lod1 trunk,
+#             20-face indexed inner core + fringe leaf cards), far mid cells draw mid0 (20-face
+#             opaque puffs, no leaf cards); trees in an active hero cell are hidden in the mid shader
 #   impostor  everything else (not bushes): one quad per tree, one batch per 1024 m cell; trees in
 #             an active mid cell are hidden in the impostor shader
+# Opaque geometry (trunks, inner cores, mid0 puffs) lives on surface 0 with render_priority = -1
+# and no discard, so hardware early-Z rejects rear leaf-card fragments on surface 1 (priority 0).
 # Each level enters at its radius and leaves at lodExitRadius (hysteresis), re-picked after the
 # camera moved 4 m. Hero and mid batches are one MultiMesh per kind and cell, built on first use
 # and kept; Godot frustum-culls every batch by its box. Bushes draw only inside treeBushR.
@@ -14,25 +17,28 @@ extends Node3D
 # Data: data/valley/web/trees.bin (the low tier's rank subset, see meta.json trees), meshes and
 # atlases in data/trees/ (tools/build_tree_meshes.gd, tools/bake_impostors.mjs).
 
+const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
+
 const HERO_CELL := 32.0
 const NEAR_CELL := 64.0
 const FAR_CELL := 1024.0
 const SWAY_PAD := 2.0
 const LOD_STEP := 4.0
+const HERO_CAP := 128
 const KINDS: Array[String] = ["oak", "round", "pine", "bush", "poplar", "larch"]
 const IMP_INDEX: Array[int] = [0, 1, 2, -1, 3, 4]
 const BUSH := 3
 const MESH_DIR := "res://data/trees"
-# Walking streams cells in: batches of cells this far beyond the hero / mid radii are built ahead,
-# nearest first, at most BUILD_BUDGET_US of script per frame, so a cell is ready before it is
-# needed. A cell needed before its turn still builds at once (no pop-in).
-const PREFETCH_HERO := 24.0
+# Walking streams mid cells in: batches this far beyond mid_r are built ahead, nearest first,
+# at most BUILD_BUDGET_US of script per frame, so a cell is ready before it is needed. Hero trees
+# (~12-30 total) merge by species into per-species SwapMultiMeshes when active hero cells change.
 const PREFETCH_MID := 48.0
 const BUILD_BUDGET_US := 2000
 
 var world: RefCounted
 var hero_r := 12.0
 var mid_r := 100.0
+var mid_fine_r := 40.0
 var bush_r := 120.0
 
 var count := 0
@@ -50,15 +56,20 @@ var rank_limit := 1 << 20
 var tier_trees := 0.55
 var base_hero_r := 12.0
 var base_mid_r := 100.0
+var base_mid_fine_r := 40.0
 var base_bush_r := 120.0
 var pkind := PackedByteArray()
 var tint_max := 2.0
 
 var hero_mesh: Array[Mesh] = []
-var mid_mesh: Array[Mesh] = []
+var mid_coarse_mesh: Array[Mesh] = []
+var mid_fine_mesh: Array[Mesh] = []
 var mesh_tris: Dictionary = {}
-var hero_mat: ShaderMaterial
-var mid_mat: ShaderMaterial
+var mesh_draws: Dictionary = {}
+var hero_opaque_mat: ShaderMaterial
+var hero_card_mat: ShaderMaterial
+var mid_opaque_mat: ShaderMaterial
+var mid_card_mat: ShaderMaterial
 var imp_mat: ShaderMaterial
 var cells_img: Image
 var cells_tex: ImageTexture
@@ -73,7 +84,11 @@ var flag_z0 := 0
 var flag_w := 0
 var flag_h := 0
 
-var hero_batches: Dictionary = {}
+var hero_swaps: Array = []
+var hero_counts: PackedInt32Array = PackedInt32Array()
+var hero_aabbs: Array[AABB] = []
+var hero_bufs: Array[PackedFloat32Array] = []
+var _hero_dirty := true
 var mid_batches: Dictionary = {}
 var hero_active: Dictionary = {}
 var mid_active: Dictionary = {}
@@ -85,7 +100,7 @@ var lod_center := Vector3(1e9, 0.0, 1e9)
 var _prefetch: Array = []
 # Slowest single cell build so far (walk checks).
 var build_max_us := 0
-# Per drawn MultiMeshInstance3D: [cull box, triangles per draw], filled on first use.
+# Per drawn MultiMeshInstance3D: [cull box, triangles per draw, surfaces per draw], filled on first use.
 var _draw_info := {}
 
 var on := true
@@ -110,9 +125,11 @@ func _ready() -> void:
 	var tier: Dictionary = tm.tierValues
 	hero_r = float(tier.treeHeroR)
 	mid_r = float(tier.treeMidR)
+	mid_fine_r = float(tier.get("treeMidFineR", 40.0))
 	bush_r = float(tier.get("treeBushR", mid_r))
 	base_hero_r = hero_r
 	base_mid_r = mid_r
+	base_mid_fine_r = mid_fine_r
 	base_bush_r = bush_r
 	tier_trees = float(tier.trees)
 	_decode(tm)
@@ -120,6 +137,7 @@ func _ready() -> void:
 	hero_grid = _grid(HERO_CELL, false)
 	near_grid = _grid(NEAR_CELL, false)
 	_build_cell_flags()
+	_build_hero_swaps()
 	_build_far()
 	_build_hero_oaks(tm.heroOaks)
 	load_ms = Time.get_ticks_msec() - t0
@@ -145,13 +163,6 @@ func _decode(_tm: Dictionary) -> void:
 
 
 func _load_assets() -> void:
-	for k in KINDS:
-		var h: Mesh = load(MESH_DIR.path_join(k + "_hero.res"))
-		var m: Mesh = load(MESH_DIR.path_join(k + "_mid.res"))
-		hero_mesh.append(h)
-		mid_mesh.append(m)
-		mesh_tris[h] = _tris(h)
-		mesh_tris[m] = _tris(m)
 	var leaf := _png("leaf_atlas.pngdata")
 	leaf.generate_mipmaps()
 	var leaf_tex := ImageTexture.create_from_image(leaf)
@@ -161,18 +172,31 @@ func _load_assets() -> void:
 	alb.generate_mipmaps()
 	nrm.generate_mipmaps()
 
-	var tree_shader: Shader = load("res://shaders/tree.gdshader")
-	hero_mat = ShaderMaterial.new()
-	hero_mat.shader = tree_shader
-	mid_mat = ShaderMaterial.new()
-	mid_mat.shader = tree_shader
-	for mat in [hero_mat, mid_mat]:
-		mat.set_shader_parameter("leaf_atlas", leaf_tex)
+	var opaque_shader: Shader = load("res://shaders/tree_opaque.gdshader")
+	var card_shader: Shader = load("res://shaders/tree.gdshader")
+	hero_opaque_mat = ShaderMaterial.new()
+	hero_opaque_mat.shader = opaque_shader
+	hero_opaque_mat.render_priority = -1
+	hero_card_mat = ShaderMaterial.new()
+	hero_card_mat.shader = card_shader
+	hero_card_mat.render_priority = 0
+	mid_opaque_mat = ShaderMaterial.new()
+	mid_opaque_mat.shader = opaque_shader
+	mid_opaque_mat.render_priority = -1
+	mid_card_mat = ShaderMaterial.new()
+	mid_card_mat.shader = card_shader
+	mid_card_mat.render_priority = 0
+
+	for mat in [hero_opaque_mat, mid_opaque_mat]:
 		mat.set_shader_parameter("biome_tex", world.texture("biome"))
 		mat.set_shader_parameter("near_size", world.near_size)
 		mat.set_shader_parameter("blend_start", world.blend_start)
 		mat.set_shader_parameter("blend_end", world.blend_end)
-	mid_mat.set_shader_parameter("hide_in_hero", 1.0)
+	for mat in [hero_card_mat, mid_card_mat]:
+		mat.set_shader_parameter("leaf_atlas", leaf_tex)
+	mid_opaque_mat.set_shader_parameter("hide_in_hero", 1.0)
+	mid_card_mat.set_shader_parameter("hide_in_hero", 1.0)
+
 	imp_mat = ShaderMaterial.new()
 	imp_mat.shader = load("res://shaders/tree_impostor.gdshader")
 	imp_mat.set_shader_parameter("imp_albedo", ImageTexture.create_from_image(alb))
@@ -184,15 +208,36 @@ func _load_assets() -> void:
 	var g: Array = info.grid
 	imp_mat.set_shader_parameter("imp_grid", Vector4(g[0], g[1], g[2], g[3]))
 	imp_mat.set_shader_parameter("imp_atlas_px", float(info.size))
-	for mat in [hero_mat, mid_mat, imp_mat]:
+	for mat in [hero_opaque_mat, hero_card_mat, mid_opaque_mat, mid_card_mat, imp_mat]:
 		mat.set_shader_parameter("noise_tex", world.noise_tex)
 		mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
 		mat.set_shader_parameter("water_level", world.water_level)
 
+	for k in KINDS:
+		var h: Mesh = load(MESH_DIR.path_join(k + "_hero.res"))
+		var m0: Mesh = load(MESH_DIR.path_join(k + "_mid0.res"))
+		var m1: Mesh = load(MESH_DIR.path_join(k + "_mid1.res"))
+		_bind_mesh_mats(h, hero_opaque_mat, hero_card_mat)
+		_bind_mesh_mats(m0, mid_opaque_mat, mid_card_mat)
+		_bind_mesh_mats(m1, mid_opaque_mat, mid_card_mat)
+		hero_mesh.append(h)
+		mid_coarse_mesh.append(m0)
+		mid_fine_mesh.append(m1)
+		for m in [h, m0, m1]:
+			mesh_tris[m] = _tris(m)
+			mesh_draws[m] = m.get_surface_count()
+
+
+static func _bind_mesh_mats(m: Mesh, op_mat: ShaderMaterial, card_mat: ShaderMaterial) -> void:
+	if m.get_surface_count() >= 1:
+		m.surface_set_material(0, op_mat)
+	if m.get_surface_count() >= 2:
+		m.surface_set_material(1, card_mat)
+
 
 # Materials whose look values the environment sets (sun, light colour, exposure).
 func materials() -> Array[ShaderMaterial]:
-	return [hero_mat, mid_mat, imp_mat]
+	return [hero_opaque_mat, hero_card_mat, mid_opaque_mat, mid_card_mat, imp_mat]
 
 
 func _png(file: String) -> Image:
@@ -203,8 +248,11 @@ func _png(file: String) -> Image:
 
 
 static func _tris(m: Mesh) -> int:
-	var arr := m.surface_get_arrays(0)
-	return (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	var total := 0
+	for s in m.get_surface_count():
+		var arr := m.surface_get_arrays(s)
+		total += (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	return total
 
 
 # Counting sort of tree indices by cell, over a grid padded by two cells (treeChunks.js
@@ -259,7 +307,7 @@ func _build_cell_flags() -> void:
 	cells_bytes.resize(flag_w * flag_h * 2)
 	cells_img = Image.create_from_data(flag_w, flag_h, false, Image.FORMAT_RG8, cells_bytes)
 	cells_tex = ImageTexture.create_from_image(cells_img)
-	for mat in [mid_mat, imp_mat]:
+	for mat in [mid_opaque_mat, mid_card_mat, imp_mat]:
 		mat.set_shader_parameter("tree_cells", cells_tex)
 		mat.set_shader_parameter("tree_cell_origin", Vector2(flag_x0, flag_z0))
 
@@ -359,6 +407,7 @@ func _build_far() -> void:
 	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 1, 3, 2])
 	quad.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh_tris[quad] = 2
+	mesh_draws[quad] = 1
 	var g := _grid(FAR_CELL, true)
 	var start: PackedInt32Array = g.start
 	var order: PackedInt32Array = g.order
@@ -395,7 +444,9 @@ func _build_hero_oaks(spots: Array) -> void:
 	if spots.is_empty():
 		return
 	var mesh: Mesh = load(MESH_DIR.path_join("hero_oak.res"))
+	_bind_mesh_mats(mesh, hero_opaque_mat, hero_card_mat)
 	mesh_tris[mesh] = _tris(mesh)
+	mesh_draws[mesh] = mesh.get_surface_count()
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_custom_data = true
@@ -417,7 +468,6 @@ func _build_hero_oaks(spots: Array) -> void:
 	mm.custom_aabb = box
 	hero_oaks = MultiMeshInstance3D.new()
 	hero_oaks.multimesh = mm
-	hero_oaks.material_override = hero_mat
 	hero_oaks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(hero_oaks)
 
@@ -436,7 +486,7 @@ func _build_batch(g: Dictionary, key: Vector2i, hero: bool) -> Dictionary:
 	var idx: PackedInt32Array = _kept((g.order as PackedInt32Array).slice(start[c], start[c + 1]))
 	var cx := (key.x + 0.5) * size
 	var cz := (key.y + 0.5) * size
-	var batch := {"nodes": [], "cx": cx, "cz": cz, "size": size, "count": idx.size(), "bushes": 0, "on": false, "bush_on": true}
+	var batch := {"nodes": [], "cx": cx, "cz": cz, "size": size, "count": idx.size(), "bushes": 0, "on": false, "bush_on": true, "fine": false}
 	if idx.is_empty():
 		return batch
 	var aabb := _cell_aabb(idx, cx, cz, size)
@@ -448,17 +498,27 @@ func _build_batch(g: Dictionary, key: Vector2i, hero: bool) -> Dictionary:
 		if sub.is_empty():
 			continue
 		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = _multimesh(hero_mesh[v] if hero else mid_mesh[v], sub, false)
+		mmi.multimesh = _multimesh(hero_mesh[v] if hero else mid_coarse_mesh[v], sub, false)
 		mmi.multimesh.custom_aabb = aabb
-		mmi.material_override = hero_mat if hero else mid_mat
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mmi.visible = false
 		mmi.set_meta("bush", v == BUSH)
+		mmi.set_meta("kind", v)
 		add_child(mmi)
 		batch.nodes.append(mmi)
 		if v == BUSH:
 			batch.bushes = sub.size()
 	return batch
+
+
+func _set_fine(batch: Dictionary, fine: bool) -> void:
+	if batch.fine == fine:
+		return
+	batch.fine = fine
+	for mmi: MultiMeshInstance3D in batch.nodes:
+		var v: int = mmi.get_meta("kind")
+		mmi.multimesh.mesh = mid_fine_mesh[v] if fine else mid_coarse_mesh[v]
+		_draw_info.erase(mmi)
 
 
 func _show(batch: Dictionary, show: bool, bush_on: bool) -> void:
@@ -516,7 +576,11 @@ func _sync(g: Dictionary, batches: Dictionary, active: Dictionary, want: Diction
 		if not batches.has(key):
 			batches[key] = _make_batch(g, key, hero)
 		var b: Dictionary = batches[key]
-		var bush_on := _cell_distance(b.cx, b.cz, b.size, x, z) < bush_r
+		var d := _cell_distance(b.cx, b.cz, b.size, x, z)
+		var bush_on := d < bush_r
+		if not hero:
+			var fine: bool = d < mid_fine_r or (bool(b.fine) and d < _exit_radius(mid_fine_r))
+			_set_fine(b, fine)
 		_show(b, true, bush_on)
 		active[key] = true
 		n += b.count if bush_on else b.count - b.bushes
@@ -524,16 +588,96 @@ func _sync(g: Dictionary, batches: Dictionary, active: Dictionary, want: Diction
 	return Vector2i(n, imp)
 
 
+func _build_hero_swaps() -> void:
+	hero_swaps.clear()
+	hero_counts.resize(KINDS.size())
+	hero_counts.fill(0)
+	hero_aabbs.clear()
+	hero_bufs.clear()
+	for v in KINDS.size():
+		var sw := SwapMultiMesh.new(self, hero_mesh[v], HERO_CAP, AABB())
+		sw.set_visible(false)
+		hero_swaps.append(sw)
+		hero_aabbs.append(AABB())
+		var buf := PackedFloat32Array()
+		buf.resize(HERO_CAP * 16)
+		hero_bufs.append(buf)
+	_hero_dirty = true
+
+
+func _sync_hero(want: Dictionary) -> int:
+	var same := not _hero_dirty and want.size() == hero_active.size()
+	if same:
+		for key in want:
+			if not hero_active.has(key):
+				same = false
+				break
+	if same:
+		var total_same := 0
+		for v in KINDS.size():
+			total_same += hero_counts[v]
+		return total_same
+	_hero_dirty = false
+	hero_active = want.duplicate()
+	var by_kind: Array[PackedInt32Array] = []
+	for v in KINDS.size():
+		by_kind.append(PackedInt32Array())
+	var start: PackedInt32Array = hero_grid.start
+	var order: PackedInt32Array = hero_grid.order
+	var gw := int(hero_grid.w)
+	var ix0 := int(hero_grid.ix0)
+	var iz0 := int(hero_grid.iz0)
+	for key in want:
+		var k: Vector2i = key
+		var c := (k.y - iz0) * gw + k.x - ix0
+		for i in _kept(order.slice(start[c], start[c + 1])):
+			by_kind[pkind[i]].append(i)
+	var total := 0
+	for v in KINDS.size():
+		var sub := by_kind[v]
+		var n := sub.size()
+		hero_counts[v] = n
+		total += n
+		var sw: SwapMultiMesh = hero_swaps[v]
+		if n == 0:
+			sw.set_visible(false)
+			hero_aabbs[v] = AABB()
+			continue
+		var cap: int = sw.mms[0].instance_count
+		if n > cap:
+			for mmi in sw.mmis:
+				remove_child(mmi)
+				mmi.queue_free()
+			cap = maxi(cap * 2, n)
+			sw = SwapMultiMesh.new(self, hero_mesh[v], cap, AABB())
+			hero_swaps[v] = sw
+			var nb := PackedFloat32Array()
+			nb.resize(cap * 16)
+			hero_bufs[v] = nb
+		var buf: PackedFloat32Array = hero_bufs[v]
+		var x0 := INF; var x1 := -INF; var y0 := INF; var y1 := -INF; var z0 := INF; var z1 := -INF; var smax := 0.0
+		for j in n:
+			var i := sub[j]
+			_write_instance(buf, j * 16, i, 0.0)
+			x0 = minf(x0, px[i]); x1 = maxf(x1, px[i])
+			y0 = minf(y0, py[i]); y1 = maxf(y1, py[i])
+			z0 = minf(z0, pz[i]); z1 = maxf(z1, pz[i])
+			smax = maxf(smax, ps[i])
+		var pad := smax * 0.6 + SWAY_PAD
+		var aabb := AABB(Vector3(x0 - pad, y0 - SWAY_PAD, z0 - pad), Vector3(x1 - x0 + pad * 2.0, y1 - y0 + smax * 1.15 + SWAY_PAD * 2.0, z1 - z0 + pad * 2.0))
+		hero_aabbs[v] = aabb
+		sw.set_visible(true)
+		sw.push(buf, n)
+		sw.mmis[sw._cur].custom_aabb = aabb
+	return total
+
+
 func _plan_prefetch(cam_pos: Vector3) -> void:
 	_prefetch.clear()
-	for hero in [true, false]:
-		var g: Dictionary = hero_grid if hero else near_grid
-		var batches: Dictionary = hero_batches if hero else mid_batches
-		var r: float = hero_r + PREFETCH_HERO if hero else mid_r + PREFETCH_MID
-		for key in _cells_in_radius(g, cam_pos.x, cam_pos.z, r, {}):
-			if not batches.has(key):
-				var size: float = g.size
-				_prefetch.append([_cell_distance((key.x + 0.5) * size, (key.y + 0.5) * size, size, cam_pos.x, cam_pos.z), hero, key])
+	for key in _cells_in_radius(near_grid, cam_pos.x, cam_pos.z, mid_r + PREFETCH_MID, {}):
+		if not mid_batches.has(key):
+			var size: float = near_grid.size
+			_prefetch.append([_cell_distance((key.x + 0.5) * size, (key.y + 0.5) * size, size, cam_pos.x, cam_pos.z), key])
 	_prefetch.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 	_prefetch.reverse()
 
@@ -541,9 +685,8 @@ func _plan_prefetch(cam_pos: Vector3) -> void:
 func _drain_prefetch(t0: int) -> void:
 	while not _prefetch.is_empty() and Time.get_ticks_usec() - t0 < BUILD_BUDGET_US:
 		var job: Array = _prefetch.pop_back()
-		var batches: Dictionary = hero_batches if job[1] else mid_batches
-		if not batches.has(job[2]):
-			batches[job[2]] = _make_batch(hero_grid if job[1] else near_grid, job[2], job[1])
+		if not mid_batches.has(job[1]):
+			mid_batches[job[1]] = _make_batch(near_grid, job[1], false)
 
 
 func update_lod(cam_pos: Vector3, force: bool = false) -> void:
@@ -554,12 +697,12 @@ func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	lod_center = cam_pos
 	var hero_want := _cells_in_radius(hero_grid, cam_pos.x, cam_pos.z, hero_r, hero_active)
 	var mid_want := _cells_in_radius(near_grid, cam_pos.x, cam_pos.z, mid_r, mid_active)
-	var h := _sync(hero_grid, hero_batches, hero_active, hero_want, true, cam_pos.x, cam_pos.z)
+	var h_cnt := _sync_hero(hero_want)
 	var m := _sync(near_grid, mid_batches, mid_active, mid_want, false, cam_pos.x, cam_pos.z)
 	_write_cell_flags()
 	_plan_prefetch(cam_pos)
-	stats.hero = h.x
-	stats.mid = m.x - h.x
+	stats.hero = h_cnt
+	stats.mid = m.x - h_cnt
 	stats.near_cells = mid_want.size()
 	stats.impostor = far_total - m.y
 
@@ -573,12 +716,12 @@ func set_levers(dens: float, dist: float) -> void:
 	rank_limit = int(floor(tier_trees * dens * 65536.0)) if dens < 1.0 else 1 << 20
 	hero_r = base_hero_r * dist
 	mid_r = base_mid_r * dist
+	mid_fine_r = base_mid_fine_r * dist
 	bush_r = base_bush_r * dist
 	for child in get_children():
 		if child != hero_oaks:
 			child.queue_free()
 			remove_child(child)
-	hero_batches.clear()
 	mid_batches.clear()
 	_prefetch.clear()
 	_draw_info.clear()
@@ -586,6 +729,7 @@ func set_levers(dens: float, dist: float) -> void:
 	mid_active.clear()
 	far_nodes.clear()
 	far_total = 0
+	_build_hero_swaps()
 	_build_far()
 	lod_center = Vector3(1e9, 0.0, 1e9)
 
@@ -626,9 +770,10 @@ func count_drawn(cam: Camera3D) -> void:
 		_count(mmi, planes)
 	if hero_oaks != null:
 		_count(hero_oaks, planes)
-	for key in hero_active:
-		for mmi: MultiMeshInstance3D in hero_batches[key].nodes:
-			_count(mmi, planes)
+	for v in KINDS.size():
+		if hero_counts[v] > 0 and _box_in(planes, hero_aabbs[v]):
+			last_tris += hero_counts[v] * int(mesh_tris[hero_mesh[v]])
+			last_draws += int(mesh_draws.get(hero_mesh[v], 1))
 	for key in mid_active:
 		for mmi: MultiMeshInstance3D in mid_batches[key].nodes:
 			_count(mmi, planes)
@@ -640,12 +785,16 @@ func _count(mmi: MultiMeshInstance3D, planes: Array[Plane]) -> void:
 	var info: Array = _draw_info.get(mmi, [])
 	if info.is_empty():
 		var mm := mmi.multimesh
-		info = [mm.custom_aabb if mm.custom_aabb.size != Vector3.ZERO else mm.get_aabb(), mm.instance_count * int(mesh_tris[mm.mesh])]
+		info = [
+			mm.custom_aabb if mm.custom_aabb.size != Vector3.ZERO else mm.get_aabb(),
+			mm.instance_count * int(mesh_tris[mm.mesh]),
+			int(mesh_draws.get(mm.mesh, 1)),
+		]
 		_draw_info[mmi] = info
 	if not _box_in(planes, info[0]):
 		return
 	last_tris += info[1]
-	last_draws += 1
+	last_draws += info[2]
 
 
 static func _box_in(planes: Array[Plane], b: AABB) -> bool:

@@ -4,7 +4,7 @@
 // the tree's own (position, rotation about +Y, scale (s * sx, s, s * sx)); INSTANCE_CUSTOM is
 // (tint rgb, species index in the atlas). The quad picks the nearest of 8 x 3 baked views of its
 // species. Trees whose 64 m cell draws as mid or hero geometry (green flag in the shared
-// cell-flag texture) collapse to a point.
+// cell-flag texture) collapse to a point early in vertex().
 //
 // The atlas is Stillwater's own bake (tools/bake_impostors.mjs): albedo stored gamma-2 and both
 // textures premultiplied by coverage, so the shader divides by alpha.
@@ -37,51 +37,62 @@ varying vec3 v_wpos;
 
 void vertex() {
 	vec3 pos = MODEL_MATRIX[3].xyz;
-	vec3 bx = MODEL_MATRIX[0].xyz;
-	float sw = length(bx);
-	float sh = length(MODEL_MATRIX[1].xyz);
-	float cr = bx.x / sw;
-	float sr = -bx.z / sw;
-	vec4 fr = imp_frames[int(INSTANCE_CUSTOM.a + 0.5)];
-	vec3 impC = pos + vec3(0.0, fr.y * sh, 0.0);
-	vec3 impTo = CAMERA_POSITION_WORLD - impC;
-	float impDist = length(impTo);
-	vec3 toCam = impTo / max(impDist, 1e-3);
-	vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam) + vec3(1e-5, 0.0, 0.0));
-	vec3 upv = cross(toCam, right);
-	vec3 l = vec3(toCam.x * cr - toCam.z * sr, toCam.y, toCam.x * sr + toCam.z * cr);
-	float azF = atan(l.x, l.z);
-	if (azF < 0.0) {
-		azF += 6.2831853;
-	}
-	float az = mod(floor(azF / (6.2831853 / IMP_AZ) + 0.5), IMP_AZ);
-	float elev = atan(l.y, length(l.xz));
-	float el = 0.0;
-	// IMPOSTOR_ELEVATIONS [0, 0.5, 1.05]: switch at the midpoints.
-	if (elev > 0.25) {
-		el = 1.0;
-	}
-	if (elev > 0.775) {
-		el = 2.0;
-	}
-	float idx = INSTANCE_CUSTOM.a * IMP_VIEWS + el * IMP_AZ + az;
-	v_tile = vec2(mod(idx, imp_grid.x), floor(idx / imp_grid.x));
-	v_uv = VERTEX.xy + 0.5;
-	v_tint = INSTANCE_CUSTOM.rgb;
-	v_right = right;
-	v_up = upv;
-	v_to_cam = toCam;
-	v_y = VERTEX.y + 0.5;
-	// Far forests merge into masses instead of thinning to dots as alpha-tested mips shrink.
-	float expand = mix(1.0, 1.22, smoothstep(350.0, 1600.0, impDist));
-	float sway = sin(TIME * 0.9 + pos.x * 0.071 + pos.z * 0.053) * 0.012 * (0.4 + wind_strength) * max(VERTEX.y + 0.1, 0.0);
-	vec3 w = impC
-		+ right * (VERTEX.x * 2.0 * fr.w * sw * expand + sway * sh)
-		+ upv * (VERTEX.y * 2.0 * fr.w * sh * expand);
-	v_wpos = w;
 	vec2 cell = (floor(pos.xz / 64.0) + 0.5) * 64.0;
-	float midOn = texelFetch(tree_cells, ivec2(floor(cell / 32.0) - tree_cell_origin), 0).g;
-	VERTEX = midOn > 0.5 ? vec3(0.0) : (VIEW_MATRIX * vec4(w, 1.0)).xyz;
+	if (texelFetch(tree_cells, ivec2(floor(cell / 32.0) - tree_cell_origin), 0).g > 0.5) {
+		VERTEX = vec3(0.0);
+		v_uv = vec2(0.0);
+		v_tile = vec2(0.0);
+		v_tint = vec3(0.0);
+		v_right = vec3(1.0, 0.0, 0.0);
+		v_up = vec3(0.0, 1.0, 0.0);
+		v_to_cam = vec3(0.0, 0.0, 1.0);
+		v_y = 0.0;
+		v_wpos = pos;
+	} else {
+		vec3 bx = MODEL_MATRIX[0].xyz;
+		float sw = length(bx);
+		float sh = length(MODEL_MATRIX[1].xyz);
+		float cr = bx.x / sw;
+		float sr = -bx.z / sw;
+		vec4 fr = imp_frames[int(INSTANCE_CUSTOM.a + 0.5)];
+		vec3 impC = pos + vec3(0.0, fr.y * sh, 0.0);
+		vec3 impTo = CAMERA_POSITION_WORLD - impC;
+		float impDist = length(impTo);
+		vec3 toCam = impTo / max(impDist, 1e-3);
+		vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam) + vec3(1e-5, 0.0, 0.0));
+		vec3 upv = cross(toCam, right);
+		vec3 l = vec3(toCam.x * cr - toCam.z * sr, toCam.y, toCam.x * sr + toCam.z * cr);
+		float azF = atan(l.x, l.z);
+		if (azF < 0.0) {
+			azF += 6.2831853;
+		}
+		float az = mod(floor(azF / (6.2831853 / IMP_AZ) + 0.5), IMP_AZ);
+		float elev = atan(l.y, length(l.xz));
+		float el = 0.0;
+		// IMPOSTOR_ELEVATIONS [0, 0.5, 1.05]: switch at the midpoints.
+		if (elev > 0.25) {
+			el = 1.0;
+		}
+		if (elev > 0.775) {
+			el = 2.0;
+		}
+		float idx = INSTANCE_CUSTOM.a * IMP_VIEWS + el * IMP_AZ + az;
+		v_tile = vec2(mod(idx, imp_grid.x), floor(idx / imp_grid.x));
+		v_uv = VERTEX.xy + 0.5;
+		v_tint = INSTANCE_CUSTOM.rgb;
+		v_right = right;
+		v_up = upv;
+		v_to_cam = toCam;
+		v_y = VERTEX.y + 0.5;
+		// Far forests merge into masses instead of thinning to dots as alpha-tested mips shrink.
+		float expand = mix(1.0, 1.22, smoothstep(350.0, 1600.0, impDist));
+		float sway = sin(TIME * 0.9 + pos.x * 0.071 + pos.z * 0.053) * 0.012 * (0.4 + wind_strength) * max(VERTEX.y + 0.1, 0.0);
+		vec3 w = impC
+			+ right * (VERTEX.x * 2.0 * fr.w * sw * expand + sway * sh)
+			+ upv * (VERTEX.y * 2.0 * fr.w * sh * expand);
+		v_wpos = w;
+		VERTEX = (VIEW_MATRIX * vec4(w, 1.0)).xyz;
+	}
 }
 
 void fragment() {
@@ -107,8 +118,13 @@ void fragment() {
 	base = mix(base, base * vec3(1.14, 1.06, 0.80), smoothstep(0.50, 0.80, 1.0 - macH) * 0.38);
 	float sunSide = clamp(dot(impN, sun_dir) * 0.5 + 0.5, 0.0, 1.0);
 	float litMask = smoothstep(0.20, 0.78, sunSide * 0.62 + v_y * 0.28);
-	vec3 coolMul = painterly > 0.5 ? vec3(0.56, 0.76, 1.26) : vec3(0.46, 0.82, 1.24);
-	vec3 dcol = mix(base * coolMul, base * vec3(1.18, 1.22, 0.72), litMask);
+	float isWarmLeaf = smoothstep(0.82, 1.08, base.r / max(base.g, 0.01));
+	vec3 coolMul = painterly > 0.5 ? vec3(0.54, 0.88, 1.22) : vec3(0.46, 0.82, 1.24);
+	vec3 shadowTone = mix(base * coolMul, base * vec3(0.84, 0.54, 0.34), isWarmLeaf);
+	vec3 dcol = mix(shadowTone, base * vec3(1.18, 1.22, 0.72), litMask);
+	// Stillwater lifts impostors 6% to match live crown rim/edge brightness; painterly mode adds a
+	// slight extra lift to match the softer inner-AO floor of live crowns.
+	dcol *= painterly > 0.5 ? 1.10 : 1.06;
 
 	vec3 cam = CAMERA_POSITION_WORLD;
 	float dist = length(v_wpos - cam);
@@ -119,8 +135,10 @@ void fragment() {
 		vec3 Vw = normalize(v_wpos - cam);
 		float sl = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
 		float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
-		lit += dcol * light_col * vec3(0.95, 1.02, 0.68) * back * 0.14 * sl;
-		lit += dcol * vec3(0.84, 1.0, 0.74) * 0.036 * length(light_col);
+		float back_k = painterly > 0.5 ? 0.13 : 0.14;
+		float bounce_k = painterly > 0.5 ? 0.042 : 0.036;
+		lit += dcol * light_col * vec3(0.95, 1.02, 0.68) * back * back_k * sl;
+		lit += dcol * vec3(0.84, 1.0, 0.74) * bounce_k * length(light_col);
 	}
 	lit = w_light_floor(lit, base);
 	vec3 atm_mul;

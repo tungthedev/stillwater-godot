@@ -169,9 +169,9 @@
    }
   },
   {
-   "file": "meshes/oak_mid.bin",
+   "file": "meshes/oak_mid0.bin",
    "kind": 0,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyBroadleaf",
    "seed": 11,
    "options": {
@@ -183,10 +183,13 @@
     ],
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 1,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 615,
-   "triangleCount": 366,
+   "vertexCount": 705,
+   "triangleCount": 1296,
    "layout": {
     "position": {
      "offset": 0,
@@ -194,41 +197,108 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 7380,
+     "offset": 8460,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 14760,
+     "offset": 16920,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 19680,
+     "offset": 22560,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 27060,
+     "offset": 31020,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 34440,
-     "count": 1098,
+     "offset": 39480,
+     "count": 3888,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.42098987102508545,
+     -0.4191506505012512,
      -0.12037207931280136,
-     -0.3512076437473297
+     -0.36402708292007446
     ],
     "max": [
-     0.4137846529483795,
-     0.9604172110557556,
-     0.5314555168151855
+     0.43007028102874756,
+     0.9767349362373352,
+     0.5314720869064331
+    ]
+   }
+  },
+  {
+   "file": "meshes/oak_mid1.bin",
+   "kind": 0,
+   "lod": "mid1",
+   "generator": "fluffyBroadleaf",
+   "seed": 11,
+   "options": {
+    "kind": "oak",
+    "color": [
+     0.13,
+     0.39,
+     0.075
+    ],
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 8,
+    "trunkLod": 1
+   },
+   "vertexCount": 1055,
+   "triangleCount": 1068,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 12660,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 25320,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 33760,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 46420,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 59080,
+     "count": 3204,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.44346553087234497,
+     -0.12052523344755173,
+     -0.36010539531707764
+    ],
+    "max": [
+     0.43538594245910645,
+     1.0031054019927979,
+     0.5338178277015686
     ]
    }
   },
@@ -357,24 +427,27 @@
    }
   },
   {
-   "file": "meshes/round_mid.bin",
+   "file": "meshes/round_mid0.bin",
    "kind": 1,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyBroadleaf",
    "seed": 23,
    "options": {
     "kind": "round",
     "color": [
-     0.18,
-     0.43,
+     0.16,
+     0.42,
      0.09
     ],
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 1,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 507,
-   "triangleCount": 312,
+   "vertexCount": 579,
+   "triangleCount": 1056,
    "layout": {
     "position": {
      "offset": 0,
@@ -382,41 +455,108 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 6084,
+     "offset": 6948,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 12168,
+     "offset": 13896,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 16224,
+     "offset": 18528,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 22308,
+     "offset": 25476,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 28392,
-     "count": 936,
+     "offset": 32424,
+     "count": 3168,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.3397248387336731,
+     -0.3425363302230835,
      -0.12149703502655029,
-     -0.4344938397407532
+     -0.413784921169281
     ],
     "max": [
-     0.4381301701068878,
-     1.0044784545898438,
-     0.37928956747055054
+     0.4373184144496918,
+     1.009361982345581,
+     0.3756493628025055
+    ]
+   }
+  },
+  {
+   "file": "meshes/round_mid1.bin",
+   "kind": 1,
+   "lod": "mid1",
+   "generator": "fluffyBroadleaf",
+   "seed": 23,
+   "options": {
+    "kind": "round",
+    "color": [
+     0.16,
+     0.42,
+     0.09
+    ],
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 8,
+    "trunkLod": 1
+   },
+   "vertexCount": 923,
+   "triangleCount": 960,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 11076,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 22152,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 29536,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 40612,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 51688,
+     "count": 2880,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.3443123698234558,
+     -0.12151128053665161,
+     -0.42288079857826233
+    ],
+    "max": [
+     0.46284928917884827,
+     1.009516954421997,
+     0.39931726455688477
     ]
    }
   },
@@ -543,9 +683,9 @@
    }
   },
   {
-   "file": "meshes/pine_mid.bin",
+   "file": "meshes/pine_mid0.bin",
    "kind": 2,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyPine",
    "seed": 37,
    "options": {
@@ -556,10 +696,13 @@
     ],
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 1,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 1177,
-   "triangleCount": 608,
+   "vertexCount": 1369,
+   "triangleCount": 2592,
    "layout": {
     "position": {
      "offset": 0,
@@ -567,41 +710,107 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 14124,
+     "offset": 16428,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 28248,
+     "offset": 32856,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 37664,
+     "offset": 43808,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 51788,
+     "offset": 60236,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 65912,
-     "count": 1824,
+     "offset": 76664,
+     "count": 7776,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.35204511880874634,
+     -0.3510366678237915,
      -0.05999999865889549,
-     -0.3705124258995056
+     -0.35457444190979004
     ],
     "max": [
-     0.3460681438446045,
-     0.9984622001647949,
-     0.3467180132865906
+     0.35256752371788025,
+     0.9917439818382263,
+     0.3491746485233307
+    ]
+   }
+  },
+  {
+   "file": "meshes/pine_mid1.bin",
+   "kind": 2,
+   "lod": "mid1",
+   "generator": "fluffyPine",
+   "seed": 37,
+   "options": {
+    "color": [
+     0.065,
+     0.24,
+     0.1
+    ],
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 9,
+    "trunkLod": 1
+   },
+   "vertexCount": 1576,
+   "triangleCount": 1272,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 18912,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 37824,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 50432,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 69344,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 88256,
+     "count": 3816,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.358013391494751,
+     -0.05999999865889549,
+     -0.37669116258621216
+    ],
+    "max": [
+     0.35163363814353943,
+     1.0001325607299805,
+     0.35248053073883057
     ]
    }
   },
@@ -718,18 +927,21 @@
    }
   },
   {
-   "file": "meshes/bush_mid.bin",
+   "file": "meshes/bush_mid0.bin",
    "kind": 3,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyBush",
    "seed": 61,
    "options": {
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 252,
-   "triangleCount": 126,
+   "vertexCount": 84,
+   "triangleCount": 140,
    "layout": {
     "position": {
      "offset": 0,
@@ -737,41 +949,102 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 3024,
+     "offset": 1008,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 6048,
+     "offset": 2016,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 8064,
+     "offset": 2688,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 11088,
+     "offset": 3696,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 14112,
-     "count": 378,
+     "offset": 4704,
+     "count": 420,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.5826290845870972,
-     0.08963822573423386,
-     -0.6645594239234924
+     -0.6308259963989258,
+     0.1121084988117218,
+     -0.5441211462020874
     ],
     "max": [
-     0.5516043901443481,
-     0.8861492276191711,
-     0.6605401635169983
+     0.5225092768669128,
+     0.8110346794128418,
+     0.5701239705085754
+    ]
+   }
+  },
+  {
+   "file": "meshes/bush_mid1.bin",
+   "kind": 3,
+   "lod": "mid1",
+   "generator": "fluffyBush",
+   "seed": 61,
+   "options": {
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 0,
+    "trunkLod": 1
+   },
+   "vertexCount": 84,
+   "triangleCount": 140,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 1008,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 2016,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 2688,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 3696,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 4704,
+     "count": 420,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.6308259963989258,
+     0.1121084988117218,
+     -0.5441211462020874
+    ],
+    "max": [
+     0.5225092768669128,
+     0.8110346794128418,
+     0.5701239705085754
     ]
    }
   },
@@ -910,9 +1183,9 @@
    }
   },
   {
-   "file": "meshes/poplar_mid.bin",
+   "file": "meshes/poplar_mid0.bin",
    "kind": 4,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyBroadleaf",
    "seed": 51,
    "options": {
@@ -929,10 +1202,13 @@
     ],
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 1,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 471,
-   "triangleCount": 294,
+   "vertexCount": 537,
+   "triangleCount": 976,
    "layout": {
     "position": {
      "offset": 0,
@@ -940,41 +1216,113 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 5652,
+     "offset": 6444,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 11304,
+     "offset": 12888,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 15072,
+     "offset": 17184,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 20724,
+     "offset": 23628,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 26376,
-     "count": 882,
+     "offset": 30072,
+     "count": 2928,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.23265200853347778,
+     -0.2270101010799408,
      -0.12191466987133026,
-     -0.26617082953453064
+     -0.2404462993144989
     ],
     "max": [
-     0.22696401178836823,
-     1.0620197057724,
-     0.251848042011261
+     0.23201583325862885,
+     1.0652430057525635,
+     0.24109993875026703
+    ]
+   }
+  },
+  {
+   "file": "meshes/poplar_mid1.bin",
+   "kind": 4,
+   "lod": "mid1",
+   "generator": "fluffyBroadleaf",
+   "seed": 51,
+   "options": {
+    "kind": "poplar",
+    "color": [
+     0.18,
+     0.46,
+     0.1
+    ],
+    "bark": [
+     0.76,
+     0.73,
+     0.67
+    ],
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 8,
+    "trunkLod": 1
+   },
+   "vertexCount": 629,
+   "triangleCount": 604,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 7548,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 15096,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 20128,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 27676,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 35224,
+     "count": 1812,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.2203039824962616,
+     -0.12205801904201508,
+     -0.2311861366033554
+    ],
+    "max": [
+     0.23119449615478516,
+     1.070430040359497,
+     0.24727754294872284
     ]
    }
   },
@@ -1111,9 +1459,9 @@
    }
   },
   {
-   "file": "meshes/larch_mid.bin",
+   "file": "meshes/larch_mid0.bin",
    "kind": 5,
-   "lod": "mid",
+   "lod": "mid0",
    "generator": "fluffyLarch",
    "seed": 73,
    "options": {
@@ -1129,10 +1477,13 @@
     ],
     "lod": 0,
     "lowPoly": true,
-    "sparse": true
+    "sparse": true,
+    "puffs": 1,
+    "fringe": 0,
+    "trunkLod": 0
    },
-   "vertexCount": 518,
-   "triangleCount": 298,
+   "vertexCount": 596,
+   "triangleCount": 1104,
    "layout": {
     "position": {
      "offset": 0,
@@ -1140,41 +1491,112 @@
      "type": "f32"
     },
     "normal": {
-     "offset": 6216,
+     "offset": 7152,
      "components": 3,
      "type": "f32"
     },
     "uv": {
-     "offset": 12432,
+     "offset": 14304,
      "components": 2,
      "type": "f32"
     },
     "color": {
-     "offset": 16576,
+     "offset": 19072,
      "components": 3,
      "type": "f32"
     },
     "crown": {
-     "offset": 22792,
+     "offset": 26224,
      "components": 3,
      "type": "f32"
     },
     "index": {
-     "offset": 29008,
-     "count": 894,
+     "offset": 33376,
+     "count": 3312,
      "type": "u32"
     }
    },
    "bounds": {
     "min": [
-     -0.3889639675617218,
+     -0.29906412959098816,
      -0.06080171465873718,
-     -0.263284832239151
+     -0.2854701280593872
     ],
     "max": [
-     0.2766673266887665,
-     1.0374500751495361,
-     0.2796907126903534
+     0.28894689679145813,
+     1.079628825187683,
+     0.3291235864162445
+    ]
+   }
+  },
+  {
+   "file": "meshes/larch_mid1.bin",
+   "kind": 5,
+   "lod": "mid1",
+   "generator": "fluffyLarch",
+   "seed": 73,
+   "options": {
+    "color": [
+     0.23,
+     0.38,
+     0.11
+    ],
+    "bark": [
+     0.3,
+     0.2,
+     0.13
+    ],
+    "lod": 0,
+    "lowPoly": true,
+    "sparse": true,
+    "puffs": 0,
+    "fringe": 9,
+    "trunkLod": 1
+   },
+   "vertexCount": 699,
+   "triangleCount": 598,
+   "layout": {
+    "position": {
+     "offset": 0,
+     "components": 3,
+     "type": "f32"
+    },
+    "normal": {
+     "offset": 8388,
+     "components": 3,
+     "type": "f32"
+    },
+    "uv": {
+     "offset": 16776,
+     "components": 2,
+     "type": "f32"
+    },
+    "color": {
+     "offset": 22368,
+     "components": 3,
+     "type": "f32"
+    },
+    "crown": {
+     "offset": 30756,
+     "components": 3,
+     "type": "f32"
+    },
+    "index": {
+     "offset": 39144,
+     "count": 1794,
+     "type": "u32"
+    }
+   },
+   "bounds": {
+    "min": [
+     -0.3934512436389923,
+     -0.06097710132598877,
+     -0.2673374116420746
+    ],
+    "max": [
+     0.28058984875679016,
+     1.0404518842697144,
+     0.2837846279144287
     ]
    }
   },

@@ -71,6 +71,21 @@ float w_cloud_shadow(vec3 wp, vec3 cam) {
 	return 1.0 - strength * smoothstep(0.18, 0.74, d);
 }
 
+// Vertex-shader variant of w_cloud_shadow using explicit LOD 0 (WebGL2 forbids implicit texture() in vertex).
+float w_cloud_shadow_v(vec3 wp, vec3 cam) {
+	vec3 L = sun_dir;
+	vec2 xz = wp.xz + L.xz / max(L.y, 0.12) * (2600.0 - wp.y);
+	vec2 p = (xz + cloud_offset) * 0.000048;
+	vec4 a = textureLod(noise_tex, p, 0.0);
+	vec4 b = textureLod(noise_tex, p * 2.2 + a.xy * 0.12 + 0.37, 0.0);
+	float n = a.r * 0.70 + a.g * 0.20 + b.b * 0.10;
+	float d = smoothstep(1.0 - cloud_cover - 0.08, 1.0 - cloud_cover + 0.46, n);
+	float far_k = smoothstep(400.0, 1800.0, length(wp - cam));
+	float mountain_fade = 1.0 - smoothstep(220.0, 400.0, wp.y);
+	float strength = mix(0.24, 0.44, far_k) * mountain_fade * smoothstep(0.03, 0.16, L.y);
+	return 1.0 - strength * smoothstep(0.18, 0.74, d);
+}
+
 // w_atmosphere with the terrain self-shadow term at 1 (not ported).
 void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 	vec3 d = wp - cam;
