@@ -232,6 +232,7 @@ class Ring:
 	var draw_near := 0
 	var draw_far := 0
 	var push_us := 0
+	var baking_n := 0
 
 	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
 		cfg = c
@@ -293,6 +294,10 @@ class Ring:
 		draw_mat.set_shader_parameter("radius", radius)
 		buf_near.resize(capacity * 16)
 		buf_far.resize(capacity * 16)
+		for i in capacity:
+			for d in [0, 5, 10]:
+				buf_near[i * 16 + d] = 1.0
+				buf_far[i * 16 + d] = 1.0
 		draw_n = _swap(owner, meshes[0])
 		draw_f = _swap(owner, meshes[1])
 
@@ -319,11 +324,13 @@ class Ring:
 
 	func update(cam: Vector3, planes: Array[Plane], frame: int, assume_baked: bool) -> void:
 		# Slots baked during the previous frame's draw are now readable.
-		for s in slots:
-			if s.baking and frame > s.bake_frame:
-				s.baking = false
-				s.ready = true
-				_write_slot(s)
+		if baking_n > 0:
+			for s in slots:
+				if s.baking and frame > s.bake_frame:
+					s.baking = false
+					s.ready = true
+					baking_n -= 1
+					_write_slot(s)
 		var tiles := _ring(cam.x, cam.z)
 		var active := {}
 		for t in tiles:
@@ -341,6 +348,8 @@ class Ring:
 				s.ready = assume_baked
 				s.baking = not assume_baked
 				s.bake_frame = frame
+				if s.baking:
+					baking_n += 1
 				bake_any = bake_any or s.baking
 			_write_slot(s)
 		if bake_any:
@@ -372,14 +381,23 @@ class Ring:
 	# (slot x, y, mirror bits). The base rides in the transform because MultiMesh custom data is
 	# stored at half precision in this renderer (0.125 m steps at 140 m), the transform in full.
 	# Writes the member arrays by name: a packed array held in a local may be a copy.
+	# The basis entries are set once (buffers start as identity rows); only the per-tile values change.
 	func _put(near: bool, i: int, s: Dictionary) -> void:
-		var vals := [1.0, 0.0, 0.0, s.ox, 0.0, 1.0, 0.0, s.base, 0.0, 0.0, 1.0, s.oz, float(s.sx), float(s.sy), float(s.flips), 0.0]
 		var k := i * 16
-		for j in 16:
-			if near:
-				buf_near[k + j] = vals[j]
-			else:
-				buf_far[k + j] = vals[j]
+		if near:
+			buf_near[k + 3] = s.ox
+			buf_near[k + 7] = s.base
+			buf_near[k + 11] = s.oz
+			buf_near[k + 12] = float(s.sx)
+			buf_near[k + 13] = float(s.sy)
+			buf_near[k + 14] = float(s.flips)
+		else:
+			buf_far[k + 3] = s.ox
+			buf_far[k + 7] = s.base
+			buf_far[k + 11] = s.oz
+			buf_far[k + 12] = float(s.sx)
+			buf_far[k + 13] = float(s.sy)
+			buf_far[k + 14] = float(s.flips)
 
 	# grassTiles.js selectTileRing: tiles whose box touches the circle, nearest centre first.
 	func _ring(cx: float, cz: float) -> Array[Dictionary]:
@@ -436,6 +454,8 @@ class Ring:
 			Vector3(tile + 2.0 * cfg.pad_xz, hi - lo + cfg.pad_down + cfg.pad_up, tile + 2.0 * cfg.pad_xz))
 		s.empty = hi < world.water_level + cfg.empty_below
 		s.ready = false
+		if s.baking:
+			baking_n -= 1
 		s.baking = false
 
 	func _write_slot(s: Dictionary) -> void:

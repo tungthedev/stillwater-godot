@@ -75,6 +75,8 @@ var far_nodes: Array[MultiMeshInstance3D] = []
 var far_total := 0
 var hero_oaks: MultiMeshInstance3D
 var lod_center := Vector3(1e9, 0.0, 1e9)
+# Per drawn MultiMeshInstance3D: [cull box, triangles per draw], filled on first use.
+var _draw_info := {}
 
 var on := true
 var stats := {"hero": 0, "mid": 0, "impostor": 0, "near_cells": 0, "far_cells": 0}
@@ -538,6 +540,7 @@ func set_levers(dens: float, dist: float) -> void:
 			remove_child(child)
 	hero_batches.clear()
 	mid_batches.clear()
+	_draw_info.clear()
 	hero_active.clear()
 	mid_active.clear()
 	far_nodes.clear()
@@ -568,22 +571,38 @@ func _process(_delta: float) -> void:
 
 # Triangles and draw calls the tree batches submit this frame: every visible batch whose box is
 # in the camera frustum (Godot's own cull test) draws all its instances, hidden ones included.
+# Only the impostor cells, the hero oaks and the active hero / mid cells can be visible, so only
+# those are visited; inactive batches stay as hidden children.
 func count_drawn(cam: Camera3D) -> void:
 	last_tris = 0
 	last_draws = 0
 	if not on:
 		return
 	var planes := cam.get_frustum()
-	for child in get_children():
-		var mmi := child as MultiMeshInstance3D
-		if mmi == null or not mmi.visible:
-			continue
+	for mmi in far_nodes:
+		_count(mmi, planes)
+	if hero_oaks != null:
+		_count(hero_oaks, planes)
+	for key in hero_active:
+		for mmi: MultiMeshInstance3D in hero_batches[key].nodes:
+			_count(mmi, planes)
+	for key in mid_active:
+		for mmi: MultiMeshInstance3D in mid_batches[key].nodes:
+			_count(mmi, planes)
+
+
+func _count(mmi: MultiMeshInstance3D, planes: Array[Plane]) -> void:
+	if not mmi.visible:
+		return
+	var info: Array = _draw_info.get(mmi, [])
+	if info.is_empty():
 		var mm := mmi.multimesh
-		var box := mm.custom_aabb if mm.custom_aabb.size != Vector3.ZERO else mm.get_aabb()
-		if not _box_in(planes, box):
-			continue
-		last_tris += mm.instance_count * int(mesh_tris[mm.mesh])
-		last_draws += 1
+		info = [mm.custom_aabb if mm.custom_aabb.size != Vector3.ZERO else mm.get_aabb(), mm.instance_count * int(mesh_tris[mm.mesh])]
+		_draw_info[mmi] = info
+	if not _box_in(planes, info[0]):
+		return
+	last_tris += info[1]
+	last_draws += 1
 
 
 static func _box_in(planes: Array[Plane], b: AABB) -> bool:

@@ -30,7 +30,9 @@ var last_tris := 0
 # Script time of this frame's _process and of its instance push, for the bench.
 var prof_us := 0
 var push_us := 0
-var _planes: Array[Plane] = []
+# Per frustum plane: nx, nz, ny * (the box y deepest along the normal) - d, so a node's test reads
+# no Plane objects.
+var _pl := PackedFloat64Array()
 var _cam_pos := Vector3.ZERO
 var _dy := 0.0
 var _count := 0
@@ -145,7 +147,13 @@ func _process(_delta: float) -> void:
 
 func select(cam: Camera3D) -> int:
 	_cam_pos = cam.global_position
-	_planes = cam.get_frustum()
+	var planes := cam.get_frustum()
+	_pl.resize(planes.size() * 3)
+	for i in planes.size():
+		var n := planes[i].normal
+		_pl[i * 3] = n.x
+		_pl[i * 3 + 1] = n.z
+		_pl[i * 3 + 2] = n.y * (BOX_MIN_Y if n.y > 0.0 else BOX_MAX_Y) - planes[i].d
 	_dy = maxf(0.0, _cam_pos.y - world.height(_cam_pos.x, _cam_pos.z))
 	_count = 0
 	_visit(-ROOT * 0.5, -ROOT * 0.5, ROOT)
@@ -164,7 +172,7 @@ func _visit(x0: float, z0: float, size: float) -> void:
 		return
 	var ddx := maxf(maxf(x0 - _cam_pos.x, 0.0), _cam_pos.x - (x0 + size))
 	var ddz := maxf(maxf(z0 - _cam_pos.z, 0.0), _cam_pos.z - (z0 + size))
-	var d := Vector2(Vector2(ddx, ddz).length(), _dy).length()
+	var d := sqrt(ddx * ddx + ddz * ddz + _dy * _dy)
 	if size > MIN_SIZE and d < LOD_K * size:
 		var h := size * 0.5
 		_visit(x0, z0, h)
@@ -183,11 +191,13 @@ func _visit(x0: float, z0: float, size: float) -> void:
 # Frustum planes point outward: a box is out when its corner deepest along a plane's normal
 # is still in front of that plane.
 func _box_visible(x0: float, z0: float, size: float) -> bool:
-	for p in _planes:
-		var n := p.normal
-		var cx := x0 if n.x > 0.0 else x0 + size
-		var cy := BOX_MIN_Y if n.y > 0.0 else BOX_MAX_Y
-		var cz := z0 if n.z > 0.0 else z0 + size
-		if n.x * cx + n.y * cy + n.z * cz - p.d > 0.0:
+	var i := 0
+	while i < _pl.size():
+		var nx := _pl[i]
+		var nz := _pl[i + 1]
+		var cx := x0 if nx > 0.0 else x0 + size
+		var cz := z0 if nz > 0.0 else z0 + size
+		if nx * cx + nz * cz + _pl[i + 2] > 0.0:
 			return false
+		i += 3
 	return true
