@@ -2,8 +2,9 @@
 // spends each frame: the time inside WebGL calls that wait on the GPU process (Chrome's command
 // buffer flow control and sync IPC) versus everything else. That tells real main-thread work from
 // main-thread time that is GPU time in disguise, which the in-game timer cannot do.
-//   BASE=http://127.0.0.1:<port>/ gpu-run node tools/trace_web.mjs [--view phone|desk] [--pose trailhead]
-//     [--query '&res=40'] [--secs 4] [--out trace.json] [--vsync] [--stillwater <path>]
+//   BASE=http://127.0.0.1:<port>/ gpu-run node --max-old-space-size=6000 tools/trace_web.mjs
+//     [--view phone|desk] [--pose trailhead] [--query '&res=40'] [--secs 2] [--out trace.json] [--vsync]
+//     [--stillwater <path>]   (a trace is hundreds of MB; node's default heap is too small)
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';

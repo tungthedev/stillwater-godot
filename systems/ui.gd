@@ -251,7 +251,8 @@ func _show_results(r: Dictionary) -> void:
 	for c in panel_box.get_children():
 		c.queue_free()
 	var ok: bool = float(r.worst_fps) >= 30.0
-	panel_box.add_child(_text("Godot bench  vs 30 fps target", 17, Color.WHITE))
+	# The build id stays above the fold, so any screenshot of the panel names the build that ran.
+	panel_box.add_child(_text("Godot bench %s  vs 30 fps" % r.build, 17, Color.WHITE))
 	panel_box.add_child(_row(["stage", "fps", "p50", "p95", "tris", "draws"], 13, Color(0.7, 0.75, 0.8)))
 	for s in r.stages:
 		panel_box.add_child(_row([s.stage, "%.1f" % s.fps, "%.1f" % s.p50_ms, "%.1f" % s.p95_ms, "%.2fM" % (s.tris / 1.0e6), s.draws], 15, Color.WHITE))
