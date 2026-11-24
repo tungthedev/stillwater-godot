@@ -19,6 +19,7 @@ extends Node3D
 # byte-exact). A tile is drawn from the frame after its bake.
 
 const VegScatter := preload("res://world/veg_scatter.gd")
+const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
 
 # quality.js low: grassRadius 30, grassNear 1664, grassFar 1024, grassNearLod 16,
 # grassFarWidthScale 1.32, flowers 576 (flower radius min(34, 0.75 * grassRadius)).
@@ -92,8 +93,8 @@ func is_on() -> bool:
 func set_on(on: bool) -> void:
 	_on = on
 	for r in [grass, flowers]:
-		r.mmi_near.visible = on
-		r.mmi_far.visible = on
+		r.draw_n.set_visible(on)
+		r.draw_f.set_visible(on)
 	if not on:
 		last_tris = 0
 		last_draws = 0
@@ -216,10 +217,8 @@ class Ring:
 	var vp: SubViewport
 	var bake_mat: ShaderMaterial
 	var draw_mat: ShaderMaterial
-	var mm_near: MultiMesh
-	var mm_far: MultiMesh
-	var mmi_near: MultiMeshInstance3D
-	var mmi_far: MultiMeshInstance3D
+	var draw_n: SwapMultiMesh
+	var draw_f: SwapMultiMesh
 	var buf_near := PackedFloat32Array()
 	var buf_far := PackedFloat32Array()
 	var near_vis := 0
@@ -288,38 +287,22 @@ class Ring:
 		draw_mat.set_shader_parameter("tile_size", tile)
 		draw_mat.set_shader_parameter("slot_w", int(cfg.slot_w))
 		draw_mat.set_shader_parameter("radius", radius)
-		mm_near = _multimesh(meshes[0])
-		mm_far = _multimesh(meshes[1])
 		buf_near.resize(capacity * 16)
 		buf_far.resize(capacity * 16)
-		mmi_near = _instance(owner, mm_near)
-		mmi_far = _instance(owner, mm_far)
+		draw_n = _swap(owner, meshes[0])
+		draw_f = _swap(owner, meshes[1])
 
 	func set_meshes(near_mesh: ArrayMesh, far_mesh: ArrayMesh, n_near: int, n_far: int) -> void:
 		near_mesh.surface_set_material(0, draw_mat)
 		far_mesh.surface_set_material(0, draw_mat)
-		mm_near.mesh = near_mesh
-		mm_far.mesh = far_mesh
+		draw_n.set_mesh(near_mesh)
+		draw_f.set_mesh(far_mesh)
 		draw_near = n_near
 		draw_far = n_far
 
-	func _multimesh(mesh: ArrayMesh) -> MultiMesh:
+	func _swap(owner: Node3D, mesh: ArrayMesh) -> SwapMultiMesh:
 		mesh.surface_set_material(0, draw_mat)
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.use_custom_data = true
-		mm.mesh = mesh
-		mm.instance_count = capacity
-		mm.visible_instance_count = 0
-		return mm
-
-	func _instance(owner: Node3D, mm: MultiMesh) -> MultiMeshInstance3D:
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.custom_aabb = AABB(Vector3(-1.0e5, -1.0e4, -1.0e5), Vector3(2.0e5, 2.0e4, 2.0e5))
-		owner.add_child(mmi)
-		return mmi
+		return SwapMultiMesh.new(owner, mesh, capacity, AABB(Vector3(-1.0e5, -1.0e4, -1.0e5), Vector3(2.0e5, 2.0e4, 2.0e5)))
 
 	# grassTiles.js computeAtlasGrid: the ring plus LRU headroom.
 	func _atlas_grid(margin: float) -> void:
@@ -374,10 +357,8 @@ class Ring:
 			else:
 				_put(false, far_vis, s)
 				far_vis += 1
-		mm_near.buffer = buf_near
-		mm_far.buffer = buf_far
-		mm_near.visible_instance_count = near_vis
-		mm_far.visible_instance_count = far_vis
+		draw_n.push(buf_near, near_vis)
+		draw_f.push(buf_far, far_vis)
 		last_tris = near_vis * draw_near * int(cfg.near_tris) + far_vis * draw_far * int(cfg.far_tris)
 		last_draws = (1 if near_vis > 0 else 0) + (1 if far_vis > 0 else 0)
 

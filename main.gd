@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "slice5-2"
+const BUILD := "slice5-3"
 
 
 func _ready() -> void:

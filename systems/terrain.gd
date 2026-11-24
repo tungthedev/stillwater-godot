@@ -18,11 +18,11 @@ const MAX_NODES := 1024
 const BOX_MIN_Y := -200.0
 const BOX_MAX_Y := 4400.0
 const SKIRT := true
+const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
 
 var world: RefCounted
 var mat: ShaderMaterial
-var mm: MultiMesh
-var mmi: MultiMeshInstance3D
+var draw: SwapMultiMesh
 var buf := PackedFloat32Array()
 var tris_per_node := 0
 var last_nodes := 0
@@ -60,24 +60,15 @@ func _ready() -> void:
 
 	var patch := _patch_mesh(N)
 	patch.surface_set_material(0, mat)
-	mm = MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.use_custom_data = true
-	mm.mesh = patch
-	mm.instance_count = MAX_NODES
-	mm.visible_instance_count = 0
 	buf.resize(MAX_NODES * 16)
 	for i in MAX_NODES:
 		# Identity transform; the shader reads the node from custom data.
 		buf[i * 16] = 1.0
 		buf[i * 16 + 5] = 1.0
 		buf[i * 16 + 10] = 1.0
-	mmi = MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# Nodes are culled here on the CPU; Godot must never cull the whole terrain.
-	mmi.custom_aabb = AABB(Vector3(-ROOT * 0.5, BOX_MIN_Y, -ROOT * 0.5), Vector3(ROOT, BOX_MAX_Y - BOX_MIN_Y, ROOT))
-	add_child(mmi)
+	var box := AABB(Vector3(-ROOT * 0.5, BOX_MIN_Y, -ROOT * 0.5), Vector3(ROOT, BOX_MAX_Y - BOX_MIN_Y, ROOT))
+	draw = SwapMultiMesh.new(self, patch, MAX_NODES, box)
 
 
 func set_skirt(on: bool) -> void:
@@ -154,8 +145,7 @@ func select(cam: Camera3D) -> int:
 	_dy = maxf(0.0, _cam_pos.y - world.height(_cam_pos.x, _cam_pos.z))
 	_count = 0
 	_visit(-ROOT * 0.5, -ROOT * 0.5, ROOT)
-	mm.buffer = buf
-	mm.visible_instance_count = _count
+	draw.push(buf, _count)
 	mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 	mat.set_shader_parameter("cam_dy", _dy)
 	last_nodes = _count

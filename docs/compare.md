@@ -87,11 +87,19 @@ The Godot build's buttons (and start-up flags) change cost; each run's panel rec
 | Grass, Trees | `nograss`, `notrees` | on / off | Hide the system |
 | | `ldr` | | Force the 8-bit scene target (post off), for browsers without float colour buffers |
 
-## Known issue: terrain drops out while the camera moves (Godot, GPU Chrome)
+## Fixed in slice5-3: terrain and grass froze at the first frames (Godot, GPU Chrome)
 
-During the walk, terrain patches vanish in GPU Chrome and the gap shows sky; after about 30 s
-of walking most of the ground is gone (`captures/slice5/walk_bug/`, frames at 3, 10, 20, 30 s).
-The slice 4 build does the same, so it predates the post chain. The CPU side still selects about
-120 nodes, so the GPU draw loses them; desktop GL under llvmpipe draws them. Static poses
-(trailhead, forest) are not affected. Until it is fixed, the Godot walk stage draws less terrain
-than Stillwater's and its fps reads high.
+Builds up to slice5-2 lost the ground during the walk in GPU Chrome
+(`captures/slice5/walk_bug/`). The GPU kept drawing the terrain and grass instance data of
+the first few frames: Godot rewrote the MultiMesh buffer every frame, but its GLES3 renderer
+disables the instance attributes after each draw, and with that pattern Chrome's ANGLE (seen on
+Vulkan, Intel UHD 730) keeps reading the old data. `tools/gl_stale_instances.html` reproduces it
+in plain WebGL2. Once the trail turned, the frozen node set was out of view and only sky showed.
+Fixed by alternating two MultiMeshes per draw (`systems/swap_multimesh.gd`), so each frame points
+the attributes at another buffer. `tools/walk_check.mjs` guards it.
+
+What this changes in earlier numbers: the slice 4 and slice 5 `?bench` walk stages and the
+`?bench` forest stage (it runs after the trailhead in the same page) drew a frozen, partly
+off-screen terrain and grass, so their fps read high. Single-pose loads (`?pose=forest`,
+`tools/measure_web.mjs`) were right: their frozen data is that pose's own. Before/after numbers:
+`captures/slice5/walk_fix/`.
