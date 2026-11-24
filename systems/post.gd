@@ -201,7 +201,17 @@ func _sharpen() -> float:
 	return (0.6 if scale < 0.99 else 0.18) if fx else 0.0
 
 
-func _process(_delta: float) -> void:
+# Script time of this frame's _process, for the bench.
+var prof_us := 0
+
+
+func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_tick(delta)
+	prof_us = Time.get_ticks_usec() - t0
+
+
+func _tick(_delta: float) -> void:
 	if not on:
 		return
 	# buildWorld.js getPostParams: the veil shows when the sun is on screen and roughly ahead.

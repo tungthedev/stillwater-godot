@@ -84,7 +84,17 @@ func set_mode(i: int) -> void:
 	mode_changed.emit(mode())
 
 
+# Script time of this frame's _process, for the bench.
+var prof_us := 0
+
+
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_tick(delta)
+	prof_us = Time.get_ticks_usec() - t0
+
+
+func _tick(delta: float) -> void:
 	if mode() == "walk":
 		t += delta
 		_walk_to(fmod(t * WALK_SPEED, walk_dist[walk_dist.size() - 1] - LOOK_AHEAD))

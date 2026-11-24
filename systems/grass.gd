@@ -48,6 +48,8 @@ var _frame := 0
 var last_tris := 0
 var last_draws := 0
 var density := 1.0
+var prof_us := 0
+var push_us := 0
 
 
 func setup(w: RefCounted) -> void:
@@ -101,13 +103,13 @@ func set_on(on: bool) -> void:
 
 
 func _process(_delta: float) -> void:
-	if not _on:
-		return
+	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
-	if cam == null:
-		return
-	_frame += 1
-	update_rings(cam, false)
+	push_us = 0
+	if _on and cam != null:
+		_frame += 1
+		update_rings(cam, false)
+	prof_us = Time.get_ticks_usec() - t0
 
 
 # assume_baked: count tiles as drawable without waiting for a bake (headless budget test).
@@ -123,6 +125,7 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	flowers.update(p, planes, _frame, assume_baked)
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
+	push_us = grass.push_us + flowers.push_us
 
 
 # Stillwater's bladeGeometry(segs) for every rank below `count`, merged into one tile mesh.
@@ -228,6 +231,7 @@ class Ring:
 	var total_bakes := 0
 	var draw_near := 0
 	var draw_far := 0
+	var push_us := 0
 
 	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
 		cfg = c
@@ -357,8 +361,10 @@ class Ring:
 			else:
 				_put(false, far_vis, s)
 				far_vis += 1
+		var tp := Time.get_ticks_usec()
 		draw_n.push(buf_near, near_vis)
 		draw_f.push(buf_far, far_vis)
+		push_us = Time.get_ticks_usec() - tp
 		last_tris = near_vis * draw_near * int(cfg.near_tris) + far_vis * draw_far * int(cfg.far_tris)
 		last_draws = (1 if near_vis > 0 else 0) + (1 if far_vis > 0 else 0)
 

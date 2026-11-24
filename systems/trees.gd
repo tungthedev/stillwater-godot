@@ -81,6 +81,9 @@ var stats := {"hero": 0, "mid": 0, "impostor": 0, "near_cells": 0, "far_cells": 
 var last_tris := 0
 var last_draws := 0
 var load_ms := 0
+# Script time of this frame's _process and of its count_drawn (stats only), for the bench.
+var prof_us := 0
+var count_us := 0
 
 
 func setup(w: RefCounted) -> void:
@@ -553,11 +556,14 @@ func is_on() -> bool:
 
 
 func _process(_delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
-	if cam == null or count == 0:
-		return
-	update_lod(cam.global_position)
-	count_drawn(cam)
+	if cam != null and count > 0:
+		update_lod(cam.global_position)
+		var tc := Time.get_ticks_usec()
+		count_drawn(cam)
+		count_us = Time.get_ticks_usec() - tc
+	prof_us = Time.get_ticks_usec() - t0
 
 
 # Triangles and draw calls the tree batches submit this frame: every visible batch whose box is

@@ -8,9 +8,17 @@ extends Node
 #    gap between frames (Time.get_ticks_usec); fps = frames / time; p50 / p95 use bench.js's
 #    nearest-rank rule. Draws and triangles are the renderer's own per-frame counts, averaged.
 #    The result goes to the on-screen panel, a BENCHRESULT console line and window.__benchResult.
+#    Where the time goes, per stage: the main-thread time of each frame and the GPU time where the
+#    browser has a timer query (systems/frame_timer.gd, Web only), split into script time (from the
+#    tree's process_frame signal to this node, which processes last), render submit (frame_pre_draw
+#    to frame_post_draw: culling, draw lists, WebGL calls) and other (input, physics, engine
+#    overhead: the main-thread time minus both). Each system reports its own _process time.
 # 2. Passive: after any pose change, one BENCH line over a 20 s window (tools/measure_web.mjs).
 
 signal finished(result: Dictionary)
+
+const FrameTimer := preload("res://systems/frame_timer.gd")
+const Flags := preload("res://systems/flags.gd")
 
 const STAGES: Array[String] = ["trailhead", "forest", "walk"]
 const SETTLE := 2.0
@@ -57,6 +65,25 @@ var reported := false
 var last_draws := 0
 var last_prims := 0
 
+# Systems whose prof_us (and push_us / count_us where present) the bench sums per frame.
+var profiled := {}
+var prof_us := 0
+var _frame_start_us := 0
+var _pre_draw_us := 0
+var _render_us := -1
+var script_ms: Array[float] = []
+var render_ms: Array[float] = []
+var sys_sums := {}
+
+
+func _ready() -> void:
+	# Last in the frame, so script time covers every other node's _process.
+	process_priority = 1 << 30
+	get_tree().process_frame.connect(func() -> void: _frame_start_us = Time.get_ticks_usec())
+	RenderingServer.frame_pre_draw.connect(func() -> void: _pre_draw_us = Time.get_ticks_usec())
+	RenderingServer.frame_post_draw.connect(func() -> void: _render_us = Time.get_ticks_usec() - _pre_draw_us)
+	FrameTimer.install()
+
 
 func setup(terrain_node: Node, trees_node: Node, grass_node: Node, clouds_node: Node, cam_node: Camera3D, settings_fn: Callable) -> void:
 	terrain_sys = terrain_node
@@ -69,6 +96,7 @@ func setup(terrain_node: Node, trees_node: Node, grass_node: Node, clouds_node: 
 
 func start() -> void:
 	running = true
+	FrameTimer.install()
 	stages.clear()
 	stage_i = 0
 	Engine.max_fps = 0
@@ -90,6 +118,11 @@ func _begin_measure(now: int) -> void:
 	last_us = now
 	frames.clear()
 	sums = {"draws": 0.0, "tris": 0.0, "terrain": 0.0, "trees": 0.0, "grass": 0.0}
+	script_ms.clear()
+	render_ms.clear()
+	sys_sums.clear()
+	_render_us = -1
+	FrameTimer.start(Flags.has("nogputimer"))
 	if STAGES[stage_i] == "walk":
 		# The walk distance counts from the first measured frame, as bench.js times it.
 		cam.set_mode(cam.MODES.find("walk"))
@@ -111,15 +144,19 @@ func restart(pose: String) -> void:
 
 
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	var script_us := t0 - _frame_start_us
 	last_draws = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
 	last_prims = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 	if running:
-		_step_bench()
-		return
-	_step_passive(delta)
+		_step_bench(script_us)
+	else:
+		_step_passive(delta)
+	# Outside script_us (this node is last), so it counts as "other"; sampled into the next frame.
+	prof_us = Time.get_ticks_usec() - t0
 
 
-func _step_bench() -> void:
+func _step_bench(script_us: int) -> void:
 	var now := Time.get_ticks_usec()
 	var stage := STAGES[stage_i]
 	var el := (now - t0_us) / 1.0e6
@@ -136,13 +173,29 @@ func _step_bench() -> void:
 	sums.terrain += terrain_sys.last_tris
 	sums.trees += trees_sys.last_tris
 	sums.grass += grass_sys.last_tris
+	script_ms.append(script_us / 1000.0)
+	# The render span of the previous frame; the first measured frame has none.
+	if _render_us >= 0:
+		render_ms.append(_render_us / 1000.0)
+	for k in profiled:
+		var node: Object = profiled[k]
+		sys_sums[k] = sys_sums.get(k, 0.0) + node.prof_us
+		for sub in ["push_us", "count_us"]:
+			var v = node.get(sub)
+			if v != null:
+				var key := "%s.%s" % [k, sub.trim_suffix("_us")]
+				sys_sums[key] = sys_sums.get(key, 0.0) + v
 	var n := frames.size()
 	var dur := WALK_DUR if stage == "walk" else STOP_DUR
 	progress = "%s  %.1f / %.0f s  %d frames" % [stage, el, dur, n]
 	var done := el >= WALK_DUR if stage == "walk" else ((el >= STOP_DUR and n >= MIN_FRAMES) or el >= STOP_MAX)
 	if not done:
 		return
-	stages.append(_stage_stats(stage, el))
+	var timing := FrameTimer.analyze(FrameTimer.stop())
+	var st := _stage_stats(stage, el).merged(timing)
+	if st.has("cpu_avg"):
+		st["other_avg"] = snappedf(float(st.cpu_avg) - float(st.script_avg) - float(st.render_avg), 0.01)
+	stages.append(st)
 	stage_i += 1
 	if stage_i < STAGES.size():
 		_begin_stage()
@@ -167,7 +220,20 @@ func _stage_stats(stage: String, dur_s: float) -> Dictionary:
 		"p50_ms": snappedf(pct(sorted, 0.5), 0.01), "p95_ms": snappedf(pct(sorted, 0.95), 0.01),
 		"draws": roundi(sums.draws / n), "tris": roundi(sums.tris / n),
 		"terrain_tris": roundi(sums.terrain / n), "tree_tris": roundi(sums.trees / n), "grass_tris": roundi(sums.grass / n),
+		"script_avg": snappedf(FrameTimer.avg(script_ms), 0.01), "script_p95": snappedf(FrameTimer.p95(script_ms), 0.01),
+		"render_avg": snappedf(FrameTimer.avg(render_ms), 0.01), "render_p95": snappedf(FrameTimer.p95(render_ms), 0.01),
+		"sys_ms": _sys_avgs(n),
 	}
+
+
+# Average ms per frame of each system's _process, biggest first.
+func _sys_avgs(n: int) -> Dictionary:
+	var keys := sys_sums.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return sys_sums[a] > sys_sums[b])
+	var out := {}
+	for k in keys:
+		out[k] = snappedf(sys_sums[k] / n / 1000.0, 0.001)
+	return out
 
 
 func _finish() -> void:

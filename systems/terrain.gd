@@ -27,6 +27,9 @@ var buf := PackedFloat32Array()
 var tris_per_node := 0
 var last_nodes := 0
 var last_tris := 0
+# Script time of this frame's _process and of its instance push, for the bench.
+var prof_us := 0
+var push_us := 0
 var _planes: Array[Plane] = []
 var _cam_pos := Vector3.ZERO
 var _dy := 0.0
@@ -133,10 +136,11 @@ func _patch_mesh(n: int) -> ArrayMesh:
 
 
 func _process(_delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
-	if cam == null:
-		return
-	select(cam)
+	if cam != null:
+		select(cam)
+	prof_us = Time.get_ticks_usec() - t0
 
 
 func select(cam: Camera3D) -> int:
@@ -145,7 +149,9 @@ func select(cam: Camera3D) -> int:
 	_dy = maxf(0.0, _cam_pos.y - world.height(_cam_pos.x, _cam_pos.z))
 	_count = 0
 	_visit(-ROOT * 0.5, -ROOT * 0.5, ROOT)
+	var tp := Time.get_ticks_usec()
 	draw.push(buf, _count)
+	push_us = Time.get_ticks_usec() - tp
 	mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 	mat.set_shader_parameter("cam_dy", _dy)
 	last_nodes = _count

@@ -187,21 +187,46 @@ func _build_panel() -> void:
 	sb.set_corner_radius_all(10)
 	sb.set_content_margin_all(12)
 	panel.add_theme_stylebox_override("panel", sb)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	# A sheet between the readout and the lever grid; the results scroll, the buttons stay.
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.offset_left = 6
 	panel.offset_right = -6
 	panel.offset_top = 40
+	panel.offset_bottom = grid.offset_top - 8
 	panel.visible = false
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 8)
+	panel.add_child(outer)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer.add_child(scroll)
 	panel_box = VBoxContainer.new()
-	panel_box.add_theme_constant_override("separation", 6)
-	panel.add_child(panel_box)
+	panel_box.add_theme_constant_override("separation", 5)
+	panel_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(panel_box)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	for pair in [["Close", _close_panel], ["Run again", _start_bench]]:
+		var b := Button.new()
+		b.text = pair[0]
+		b.custom_minimum_size = Vector2(0, 40)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 15)
+		b.pressed.connect(pair[1])
+		row.add_child(b)
+	outer.add_child(row)
 	add_child(panel)
 
 
-func _row(cells: Array, size: int, col: Color) -> HBoxContainer:
+const WIDTHS_FPS := [78, 44, 50, 50, 56, 44]
+# Fits the 354 pt inside of the panel on a 390 pt wide phone.
+const WIDTHS_MS := [64, 58, 58, 52, 56, 46]
+
+
+func _row(cells: Array, size: int, col: Color, widths: Array = WIDTHS_FPS) -> HBoxContainer:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 2)
-	var widths := [78, 44, 50, 50, 56, 44]
 	for i in cells.size():
 		var l := Label.new()
 		l.text = str(cells[i])
@@ -231,26 +256,58 @@ func _show_results(r: Dictionary) -> void:
 	for s in r.stages:
 		panel_box.add_child(_row([s.stage, "%.1f" % s.fps, "%.1f" % s.p50_ms, "%.1f" % s.p95_ms, "%.2fM" % (s.tris / 1.0e6), s.draws], 15, Color.WHITE))
 	panel_box.add_child(_text(r.verdict, 16, Color(0.55, 0.95, 0.6) if ok else Color(1.0, 0.6, 0.45)))
-	var info := "%d x %d internal of %d x %d screen (Res %s, scale %.3f), dpr %s\nPost %s · Dist %s%% · Dens %d%% · Shadow %s · Grass %s · Trees %s\nTarget %s · frame cap %s · ms = frame time\n%s\n%s · build %s" % [
+	_timing_rows(r)
+	var info := "%d x %d internal of %d x %d screen (Res %s, scale %.3f), dpr %s\nPost %s · Dist %s%% · Dens %d%% · Shadow %s · Grass %s · Trees %s\nTarget %s · frame cap %s\n%s\n%s · build %s" % [
 		r.internal[0], r.internal[1], r.screen[0], r.screen[1], r.res, r.scale, str(r.dpr),
 		"on" if r.post else "off", r.dist, r.dens, "on" if r.shadow else "off", "on" if r.grass else "off", "on" if r.trees else "off",
 		r.target, r.frame_cap, r.renderer, r.engine, r.build]
-	panel_box.add_child(_text(info, 12, Color(0.85, 0.87, 0.9)))
+	panel_box.add_child(_text(info, 11, Color(0.85, 0.87, 0.9)))
 	panel_box.add_child(_text(_short_ua(str(r.ua)), 11, Color(0.6, 0.63, 0.68)))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	for pair in [["Close", _close_panel], ["Run again", _start_bench]]:
-		var b := Button.new()
-		b.text = pair[0]
-		b.custom_minimum_size = Vector2(0, 40)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_font_size_override("font_size", 15)
-		b.pressed.connect(pair[1])
-		row.add_child(b)
-	panel_box.add_child(row)
 	panel.visible = true
 	grid.visible = true
 	_refresh()
+
+
+# Where the frame time goes: ms avg / p95 per stage, the CPU or GPU verdict per stage, and the
+# biggest per-system script costs of the slowest stage.
+func _timing_rows(r: Dictionary) -> void:
+	var head := Color(0.7, 0.75, 0.8)
+	panel_box.add_child(_row(["ms avg/p95", "frame", "CPU", "script", "render", "GPU"], 12, head, WIDTHS_MS))
+	for st in r.stages:
+		var s: Dictionary = st
+		var has_cpu := s.has("cpu_avg")
+		var gpu := "n/a"
+		if float(s.get("gpu_avg", -1.0)) >= 0.0:
+			gpu = _pair(s.gpu_avg, s.gpu_p95)
+		var frame := _pair(s.frame_avg, s.frame_p95) if has_cpu else _pair(1000.0 / maxf(float(s.fps), 0.1), s.p95_ms)
+		panel_box.add_child(_row([s.stage, frame,
+			_pair(s.cpu_avg, s.cpu_p95) if has_cpu else "n/a", _pair(s.script_avg, s.script_p95), _pair(s.render_avg, s.render_p95), gpu],
+			13, Color.WHITE, WIDTHS_MS))
+	var lines := PackedStringArray()
+	for st in r.stages:
+		var s: Dictionary = st
+		lines.append("%s: %s%s" % [s.stage, s.get("bound_note", "n/a"), (", other %.1f" % s.other_avg) if s.has("other_avg") else ""])
+	panel_box.add_child(_text("\n".join(lines), 12, Color(0.95, 0.9, 0.65)))
+	var worst: Dictionary = r.stages[0]
+	for st in r.stages:
+		if float(st.fps) < float(worst.fps):
+			worst = st
+	var parts := PackedStringArray()
+	var sys: Dictionary = worst.get("sys_ms", {})
+	for k in sys:
+		if "." in k or parts.size() >= 6:
+			continue
+		var sub := PackedStringArray()
+		for sk in ["push", "count"]:
+			if sys.has("%s.%s" % [k, sk]):
+				sub.append("%s %.2f" % [sk, sys["%s.%s" % [k, sk]]])
+		parts.append("%s %.2f%s" % [k, sys[k], (" (%s)" % ", ".join(sub)) if not sub.is_empty() else ""])
+	panel_box.add_child(_text("Script ms/frame, %s: %s" % [worst.stage, " · ".join(parts)], 12, Color(0.85, 0.87, 0.9)))
+	panel_box.add_child(_text("CPU = main-thread ms per frame; other = CPU - script - render; a WebGL call waiting on the GPU counts as CPU. GPU timer: %s" % str(r.stages[0].get("gpu_state", "n/a")), 11, Color(0.6, 0.63, 0.68)))
+
+
+static func _pair(a, b) -> String:
+	return "%.1f/%.0f" % [float(a), float(b)]
 
 
 func _close_panel() -> void:
@@ -263,7 +320,17 @@ static func _short_ua(ua: String) -> String:
 	return ua.substr(i + 1, j - i - 1) if i >= 0 and j > i else ua
 
 
-func _process(_delta: float) -> void:
+# Script time of this frame's _process, for the bench.
+var prof_us := 0
+
+
+func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_tick(delta)
+	prof_us = Time.get_ticks_usec() - t0
+
+
+func _tick(_delta: float) -> void:
 	progress.text = ("Bench  " + bench_sys.progress) if bench_sys.running else ""
 	label.text = "%d fps  %d x %d of %d x %d  post %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [
 		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off",

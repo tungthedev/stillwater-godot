@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "slice5-3"
+const BUILD := "slice5-4"
 
 
 func _ready() -> void:
@@ -59,6 +59,7 @@ func _ready() -> void:
 	ui.set_script(load("res://systems/ui.gd"))
 	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "post": post, "build": BUILD})
 	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
+	bench_sys.profiled = {"terrain": terrain_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
 	add_child(ui)
 	print("BUILD %s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs renderer=%s" % [
 		BUILD, t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),

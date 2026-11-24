@@ -123,7 +123,17 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 	apply_to(sky_mat)
 
 
-func _process(_delta: float) -> void:
+# Script time of this frame's _process, for the bench.
+var prof_us := 0
+
+
+func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_tick(delta)
+	prof_us = Time.get_ticks_usec() - t0
+
+
+func _tick(_delta: float) -> void:
 	sky_mat.set_shader_parameter("view_size", get_viewport().get_visible_rect().size)
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:
