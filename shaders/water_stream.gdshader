@@ -48,7 +48,7 @@ void fragment() {
 	float sun_up = clamp(sun_dir.y * 3.0, 0.0, 1.0);
 	vec3 amb = w_sky(vec3(0.0, 1.0, 0.0));
 	vec3 amb_fill = mix(hemi_sky, amb, 0.45) * shadow_ambient_tint * ambient_boost;
-	vec3 foam_col = (amb_fill * 1.02 + light_col * 0.28 * sun_up * v_cloud_sh) * vec3(0.96, 0.99, 1.0);
+	vec3 foam_col = (amb_fill * 0.76 + light_col * 0.58 * sun_up * v_cloud_sh) * vec3(0.98, 0.99, 1.0);
 
 	vec3 col;
 	vec3 N;
@@ -102,7 +102,10 @@ void fragment() {
 		vec4 n2 = texture(noise_tex, flow_uv * vec2(2.3, 2.6) - vec2(0.0, t * speed * 0.125) + vec2(0.37, 0.21));
 
 		// Depth-graded turquoise shallow banks -> alpine sapphire current center.
-		float center_k = w_rstep(0.76, 0.14, across) * smoothstep(0.06, 0.36, depth);
+		// Near the waterfall plunge pool rim, match the turquoise pool tint so the outflow blends smoothly.
+		float pool_d = length(wp.xz - pool_center.xz);
+		float pool_blend = w_rstep(pool_radius + 8.0, pool_radius - 1.0, pool_d);
+		float center_k = w_rstep(0.76, 0.14, across) * smoothstep(0.06, 0.36, depth) * (1.0 - pool_blend * 0.82);
 		vec3 col_shallow = vec3(0.068, 0.445, 0.455);
 		vec3 col_deep    = vec3(0.016, 0.170, 0.385);
 		vec3 body_tint = mix(col_shallow, col_deep, center_k);

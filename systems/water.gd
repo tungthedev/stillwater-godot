@@ -206,10 +206,14 @@ func _build_stream_and_pool() -> void:
 		foot_idx = int(wf.footIdx)
 
 	# Stream ribbon segments: upstream (0 .. brink - 2) and downstream (pool outflow .. lake mouth).
+	# Start the downstream ribbon at the plunge pool outflow rim so it never pokes through the pool disc.
+	var pool_r := 14.0
 	var segments: Array[Vector2i] = []
 	if has_wf and brink > 4:
 		segments.append(Vector2i(0, maxi(1, brink - 2)))
 		var down_start := mini(pts.size() - 2, maxi(brink + 10, foot_idx + 4))
+		while down_start < pts.size() - 2 and Vector2(pts[down_start].x - pool_c.x, pts[down_start].y - pool_c.z).length() < pool_r - 1.2:
+			down_start += 1
 		segments.append(Vector2i(down_start, pts.size() - 1))
 	else:
 		segments.append(Vector2i(0, pts.size() - 1))
@@ -239,37 +243,35 @@ func _build_stream_and_pool() -> void:
 			var grade := maxf(0.0, (h_k - h_j) / tl)
 			var steep := clampf(grade * 1.6, 0.0, 1.0)
 			var frac := float(i) / float(n)
-			var w := (2.2 + 1.6 * frac + minf(2.2, grade * 3.0)) * (0.88 + 0.24 * (sin(float(i) * 0.08) * 0.5 + 0.5))
+			var w := (2.6 + 1.9 * frac + minf(2.2, grade * 3.0)) * (0.90 + 0.20 * (sin(float(i) * 0.08) * 0.5 + 0.5))
 
 			var hc: float = world.height_near(p.x, p.y)
-			var y_center := hc + 0.38
-			# Blend smoothly out of the plunge pool over the outflow threshold.
-			if has_wf and i >= foot_idx:
-				var dp := Vector2(p.x - pool_c.x, p.y - pool_c.z).length()
-				if dp < 14.0:
-					var bk := clampf((14.0 - dp) / 6.0, 0.0, 1.0)
-					y_center = lerpf(y_center, pool_y, bk * bk * (3.0 - 2.0 * bk))
+			var gh_l: float = world.height_near(p.x + sx * w * CROSS[1], p.y + sz * w * CROSS[1])
+			var gh_r: float = world.height_near(p.x + sx * w * CROSS[3], p.y + sz * w * CROSS[3])
+			# Keep the water surface centered in cross-sloping carved channels so uphill banks never
+			# bury half the ribbon while downhill banks stay seated cleanly inside the gravel bed.
+			var y_center := maxf(hc + 0.42, 0.5 * (gh_l + gh_r) + 0.22)
+			var lake_t := 0.0
 			# Glide gently under the lake plane at the mouth so there is zero z-fighting or step.
 			if hc < wl + 0.45:
-				var lake_t := clampf((wl + 0.45 - hc) / 0.9, 0.0, 1.0)
+				lake_t = clampf((wl + 0.45 - hc) / 0.9, 0.0, 1.0)
 				y_center = lerpf(y_center, wl - 0.06, lake_t)
 
 			var y_row: Array[float] = [0.0, 0.0, y_center, 0.0, 0.0]
 			for ci in [1, 3]:
-				var s: float = CROSS[ci]
-				var px := p.x + sx * w * s
-				var pz := p.y + sz * w * s
-				var gh: float = world.height_near(px, pz)
-				# Stay flat into rising banks; cap slightly above downhill banks to prevent vertical walls.
-				y_row[ci] = minf(y_center, gh + 0.38)
+				var gh: float = gh_l if ci == 1 else gh_r
+				var yi := clampf(y_center, gh + 0.16, gh + 0.42)
+				if lake_t > 0.0:
+					yi = lerpf(yi, wl - 0.08, lake_t)
+				y_row[ci] = yi
 			for ci in [0, 4]:
 				var s: float = CROSS[ci]
 				var inner_y: float = y_row[1] if ci == 0 else y_row[3]
 				var px := p.x + sx * w * s
 				var pz := p.y + sz * w * s
 				var gh: float = world.height_near(px, pz)
-				# Tuck outer skirt below terrain so opaque depth-test cuts a clean bank line.
-				y_row[ci] = minf(inner_y - 0.05, gh - 0.32)
+				# Tuck outer skirt below terrain so opaque depth-test cuts a clean symmetric bank line.
+				y_row[ci] = minf(inner_y - 0.08, gh - 0.32)
 
 			for ci in 5:
 				var s: float = CROSS[ci]
@@ -290,7 +292,6 @@ func _build_stream_and_pool() -> void:
 	if has_wf:
 		var rings := 5
 		var segs := 32
-		var pool_r := 14.0
 		var center_i := verts.size()
 		verts.append(Vector3(pool_c.x, pool_y, pool_c.z))
 		uvs.append(Vector2(0.0, 0.0))
@@ -308,12 +309,14 @@ func _build_stream_and_pool() -> void:
 				var down_k := clampf(dx * wf_u.x + dz * wf_u.y, 0.0, 1.0)
 				var py := pool_y
 				# Downstream outflow slopes smoothly into the carved river channel (never a dam wall).
-				if down_k > 0.20 and rn > 0.45:
-					var out_t := clampf((rn - 0.45) / 0.55, 0.0, 1.0) * smoothstep(0.20, 0.78, down_k)
-					py = lerpf(pool_y, minf(pool_y, gh + 0.34), out_t)
-				# Outer skirt tucks below terrain on flanks/back so nothing ever floats.
+				if down_k > 0.35 and rn > 0.50:
+					var out_t := clampf((rn - 0.50) / 0.50, 0.0, 1.0) * smoothstep(0.35, 0.90, down_k)
+					py = lerpf(pool_y, minf(pool_y, gh + 0.36), out_t)
+				# Smoothly tuck outer skirt below terrain everywhere except the narrow outflow channel mouth.
 				if r_i == rings:
-					py = minf(py, gh + 0.24) if down_k > 0.60 else minf(py, gh - 0.35)
+					var mouth_k := smoothstep(0.82, 0.96, down_k)
+					var skirt_y := lerpf(gh - 0.40, gh + 0.32, mouth_k)
+					py = minf(py, skirt_y)
 				verts.append(Vector3(px, py, pz))
 				uvs.append(Vector2(rn, 0.0))
 				uv2s.append(Vector2(0.0, 1.0))
