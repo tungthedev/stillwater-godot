@@ -13,6 +13,7 @@ uniform float light_floor = 0.45;
 uniform vec3 fog_beta = vec3(2.4e-5, 4.6e-5, 1.18e-4);
 uniform float fog_falloff = 0.00086957;
 uniform float mist = 0.028;
+uniform float valley_mist = 1.0;
 uniform float cloud_cover = 0.329;
 uniform vec2 cloud_offset = vec2(-223.16, -143.45);
 uniform vec2 wind_dir = vec2(0.8253, 0.5646);
@@ -112,6 +113,14 @@ void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 
 		atm_mul = ext * extm;
 		atm_add = (hor_col * (1.0 - ext)) * extm + mist_col * (1.0 - extm);
+
+		// Soft sky-tinted valley & lake-basin mist folded into atmosphere (zero extra draws/cards).
+		float vm_h = exp(-max(wp.y - (water_level + 6.0), 0.0) / 88.0);
+		float vm_dist = smoothstep(95.0, 620.0, dist);
+		float vm_k = clamp(valley_mist * vm_h * vm_dist * (0.14 + 0.14 * avg_d), 0.0, 0.32);
+		vec3 vm_col = mix(hor_col, airy_col * vec3(0.96, 1.00, 1.08), 0.55) * 1.04;
+		atm_mul *= (1.0 - vm_k);
+		atm_add = atm_add * (1.0 - vm_k) + vm_col * vm_k;
 
 		if (dist > 1450.0) {
 			float high_look = smoothstep(200.0, 380.0, cam.y) * w_rstep(0.05, -0.18, dir.y);

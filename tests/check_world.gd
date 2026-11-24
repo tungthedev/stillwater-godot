@@ -189,7 +189,8 @@ func _check_compact(samples: Array, w: RefCounted) -> void:
 		_fail("compact biome bytes differ from biome_rgb.u8")
 	_check_compact_trees(c, w)
 	_check_compact_rocks_and_props(c, w)
-	for stop in ["trailhead", "forest", "cottage"]:
+	_check_compact_undergrowth(c)
+	for stop in ["trailhead", "forest", "cottage", "forest_floor", "shafts"]:
 		var p: Dictionary = c.pose(stop)
 		var e := absf(c.height_near(p.position[0], p.position[2]) + float(c.meta.poses.eyeHeight) - float(p.position[1]))
 		if e > COMPACT_HEIGHT_TOL:
@@ -293,6 +294,24 @@ func _check_compact_rocks_and_props(c: RefCounted, w: RefCounted) -> void:
 		print("props meta: cottage (%.1f, %.1f), %d benches, %d fence runs, %d lanterns, signpost %dx%d ok" % [
 			float(pi.house.x), float(pi.house.z), pi.benches.size(), pi.fences.size(), pi.lanterns.size(),
 			stex.get_width(), stex.get_height()])
+
+
+func _check_compact_undergrowth(c: RefCounted) -> void:
+	var ug: Dictionary = c.undergrowth_info()
+	if ug.is_empty() or not ug.has("logs") or not ug.has("stumps") or not ug.has("shafts"):
+		_fail("undergrowth metadata missing logs/stumps/shafts")
+		return
+	var md: Dictionary = c.load_mushrooms()
+	if md.is_empty() or int(md.count) <= 0:
+		_fail("mushrooms.bin failed to load or empty")
+		return
+	var logs_n: int = ug.logs.size()
+	var stumps_n: int = ug.stumps.size()
+	var shafts_n: int = ug.shafts.size()
+	if logs_n == 0 or stumps_n == 0 or shafts_n == 0:
+		_fail("undergrowth counts zero (logs=%d stumps=%d shafts=%d)" % [logs_n, stumps_n, shafts_n])
+	else:
+		print("undergrowth pack: %d mossy logs, %d stumps, %d mushrooms, %d light shafts ok" % [logs_n, stumps_n, int(md.count), shafts_n])
 
 
 # Grass and flower roots and randoms, every rank, against Stillwater's own generateTileScatter.

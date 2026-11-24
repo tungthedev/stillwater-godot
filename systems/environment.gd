@@ -45,6 +45,8 @@ const PAINTERLY_TRICKS: Array[String] = [
 	"painted_water",
 	"painted_rocks",
 	"painted_props",
+	"painted_undergrowth",
+	"painted_air",
 ]
 
 var style := "painterly"
@@ -73,6 +75,7 @@ var post_on := false
 var sky_flat := false
 var cirrus_on := true
 var sky_clouds_on := false
+var valley_mist_on := true
 var frozen := false
 
 
@@ -183,6 +186,7 @@ func apply_to(mat: ShaderMaterial) -> void:
 	mat.set_shader_parameter("cloud_lit_col", cloud_lit_col)
 	mat.set_shader_parameter("cloud_shadow_col", cloud_shadow_col)
 	mat.set_shader_parameter("cloud_rim_col", cloud_rim_col)
+	mat.set_shader_parameter("valley_mist", 1.0 if valley_mist_on else 0.0)
 	if not mats.has(mat):
 		mats.append(mat)
 
@@ -211,6 +215,13 @@ func set_sky_clouds_on(on: bool) -> void:
 	sky_clouds_on = on
 	if sky_mat != null:
 		sky_mat.set_shader_parameter("sky_clouds_on", 1.0 if on else 0.0)
+
+
+func set_valley_mist(on: bool) -> void:
+	valley_mist_on = on
+	var v := 1.0 if on else 0.0
+	for m in mats:
+		m.set_shader_parameter("valley_mist", v)
 
 
 func set_style(s: String) -> void:

@@ -1141,6 +1141,37 @@ func _build_summit_flags() -> void:
 		var nflags := int(sp.nFlags)
 		var sag := float(sp.sag)
 		var fh0 := float(sp.fh0)
+		# Sagging braided rope along the exact catenary the prayer flags hang from (merged into summit_poles, 0 extra draws).
+		const ROPE_SEGS := 24
+		const ROPE_R := 0.024
+		var rope_col := Color(0.22, 0.16, 0.11)
+		var rope_pts: Array[Vector3] = []
+		rope_pts.resize(ROPE_SEGS + 1)
+		for ri in ROPE_SEGS + 1:
+			var rt := float(ri) / float(ROPE_SEGS)
+			var rp := A + dir * (rt * slen)
+			rp.y -= sin(rt * PI) * sag
+			rope_pts[ri] = rp
+		var r_ring_prev: Array[Vector3] = []
+		for ri in ROPE_SEGS + 1:
+			var tang := (rope_pts[mini(ROPE_SEGS, ri + 1)] - rope_pts[maxi(0, ri - 1)]).normalized()
+			var r_up := tang.cross(perp).normalized()
+			if r_up.length_squared() < 1e-4:
+				r_up = Vector3.UP
+			var ring: Array[Vector3] = [
+				rope_pts[ri] + perp * ROPE_R,
+				rope_pts[ri] + r_up * ROPE_R,
+				rope_pts[ri] - perp * ROPE_R,
+				rope_pts[ri] - r_up * ROPE_R,
+			]
+			if ri > 0:
+				var c_r := Color(rope_col.r, rope_col.g, rope_col.b, 0.90)
+				var u0 := Vector2.ZERO
+				for side_i in 4:
+					var nxt := (side_i + 1) % 4
+					var mid_n := ((r_ring_prev[side_i] - rope_pts[ri - 1]) + (r_ring_prev[nxt] - rope_pts[ri - 1])).normalized()
+					pole_mb._push_quad(r_ring_prev[side_i], r_ring_prev[nxt], ring[nxt], ring[side_i], mid_n, c_r, u0, u0, u0, u0)
+			r_ring_prev = ring
 		var fw0 := slen / float(nflags) * 0.84
 		const SU := 3
 		const SV := 2

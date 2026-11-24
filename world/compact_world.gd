@@ -286,6 +286,56 @@ func props_info() -> Dictionary:
 	return {}
 
 
+func undergrowth_info() -> Dictionary:
+	if meta.has("undergrowth") and meta.undergrowth is Dictionary:
+		return meta.undergrowth
+	return {}
+
+
+# Loads data/valley/web/mushrooms.bin: 9 float32 values per mushroom
+# [x, y, z, scale, stem_h, cap_r, tilt, rot, is_golden].
+func load_mushrooms() -> Dictionary:
+	var ug := undergrowth_info()
+	if not ug.has("mushrooms"):
+		return {}
+	var mm: Dictionary = ug.mushrooms
+	var n := int(mm.count)
+	var bytes := FileAccess.get_file_as_bytes(dir.path_join(mm.file))
+	if bytes.size() != n * 36:
+		push_error("compact_world: %s is %d bytes, expected %d" % [mm.file, bytes.size(), n * 36])
+		return {}
+	var vals := bytes.to_float32_array()
+	var x := PackedFloat32Array()
+	var y := PackedFloat32Array()
+	var z := PackedFloat32Array()
+	var sc := PackedFloat32Array()
+	var sh := PackedFloat32Array()
+	var cr := PackedFloat32Array()
+	var tilt := PackedFloat32Array()
+	var rot := PackedFloat32Array()
+	var golden := PackedByteArray()
+	x.resize(n); y.resize(n); z.resize(n)
+	sc.resize(n); sh.resize(n); cr.resize(n)
+	tilt.resize(n); rot.resize(n); golden.resize(n)
+	for i in n:
+		var o := i * 9
+		x[i] = vals[o]
+		y[i] = vals[o + 1]
+		z[i] = vals[o + 2]
+		sc[i] = vals[o + 3]
+		sh[i] = vals[o + 4]
+		cr[i] = vals[o + 5]
+		tilt[i] = vals[o + 6]
+		rot[i] = vals[o + 7]
+		golden[i] = 1 if vals[o + 8] > 0.5 else 0
+	return {
+		"count": n,
+		"x": x, "y": y, "z": z,
+		"sc": sc, "sh": sh, "cap_r": cr,
+		"tilt": tilt, "rot": rot, "golden": golden,
+	}
+
+
 # Loads data/valley/web/rocks.bin: 10 float32 values per rock
 # [x, y, z, sx, sy, sz, rot, tilt_x, tilt_z, kind_flags].
 func load_rocks() -> Dictionary:

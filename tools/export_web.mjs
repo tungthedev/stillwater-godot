@@ -718,12 +718,184 @@ const prayerFlags = [];
 }
 
 // Pack rocks.bin: 40 bytes per rock (10 float32 little-endian).
+// (Written after W4 woodland outcrops append their prop stones below.)
+
+// ---------- W4 undergrowth & air (from src/world/undergrowth.js: buildLogs & LightShafts) ----------
+const biomeForest = readF32(meta.biome.forest.file);
+const bRes = meta.biome.res, bSize = meta.biome.size;
+const sampleForest = (x, z) => {
+  const ix = Math.max(0, Math.min(bRes - 1, Math.floor((x / bSize + 0.5) * bRes)));
+  const iz = Math.max(0, Math.min(bRes - 1, Math.floor((z / bSize + 0.5) * bRes)));
+  return biomeForest[iz * bRes + ix];
+};
+const sampleTrailAt = (x, z) => Math.abs(sampleGrid(mask, nRes, meta.near.size, x, z) / 32767);
+
+const ugLogs = [];      // [x, y, z, ry, slope, len, rad, seed]
+const ugStumps = [];    // [x, y, z, rad, h, ry, seed]
+const ugMushrooms = []; // [x, y, z, sc, sh, capR, tilt, rot, isGolden]
+{
+  const rnd = mulberry32(404);
+  const nearBench = (x, z) => benches.some((b) => Math.hypot(x - b.x, z - b.z) < 42);
+  const addMushroomCluster = (cx, cz, count, golden = false) => {
+    for (let m = 0; m < count; m++) {
+      const a = rnd() * 6.28, r = 0.08 + rnd() * 0.85;
+      const mx = cx + Math.cos(a) * r, mz = cz + Math.sin(a) * r;
+      const my = renderHeight(mx, mz);
+      const sc = 0.8 + rnd() * 0.9;
+      const sh = (0.14 + rnd() * 0.14) * sc;
+      const tilt = (rnd() - 0.5) * 0.22;
+      const capR = (0.10 + rnd() * 0.06) * sc;
+      const rot = rnd() * 6.283185;
+      // Consume matching RNG steps for non-golden spots so downstream mulberry32(404) stays aligned.
+      if (!golden) {
+        for (let d = 0; d < 5; d++) { rnd(); rnd(); }
+      }
+      ugMushrooms.push([mx, my, mz, sc, sh, capR, tilt, rot, golden ? 1.0 : 0.0]);
+    }
+  };
+  const addMossyLog = (x, z, ry, len, rad) => {
+    const ex0 = Math.cos(ry) * len * 0.48, ez0 = -Math.sin(ry) * len * 0.48;
+    const yC = renderHeight(x, z), yA = renderHeight(x + ex0, z + ez0), yB = renderHeight(x - ex0, z - ez0);
+    const slope = Math.max(-0.26, Math.min(0.26, Math.atan2(yA - yB, len * 0.96)));
+    // Seat solidly into sloping forest floor: center sits near ground so the curved trunk rises
+    // proudly (+1.35*r) while the underside sinks below ground (-0.85*r) -> zero floating ends.
+    const yEndLow = Math.min(yA, yB) + Math.abs(Math.sin(slope)) * len * 0.48;
+    const radChunky = rad * 1.18;
+    const y = Math.min(yC, 0.5 * (yA + yB), yEndLow) + radChunky * 0.18;
+    const seed = rnd();
+    // Match Three.js addMossyLog RNG cadence (4 shelf fungi x 2 + cluster offset x 2) without drift.
+    for (let s = 0; s < 4; s++) { rnd(); rnd(); }
+    const rxM = rnd() - 0.5;
+    const rzM = rnd() - 0.5;
+    // Offset mushroom cluster cleanly outside the trunk radius so mushrooms sit beside the mossy log.
+    const sideSign = rxM >= 0 ? 1 : -1;
+    const sideOff = sideSign * (radChunky + 0.48 + Math.abs(rzM) * 0.6);
+    const alongOff = rxM * len * 0.55;
+    const mcx = x + Math.cos(ry) * alongOff + Math.sin(ry) * sideOff;
+    const mcz = z - Math.sin(ry) * alongOff + Math.cos(ry) * sideOff;
+    ugLogs.push([+x.toFixed(2), +y.toFixed(3), +z.toFixed(2), +ry.toFixed(4), +slope.toFixed(4), +len.toFixed(2), +radChunky.toFixed(3), +seed.toFixed(4), +mcx.toFixed(2), +mcz.toFixed(2)]);
+    addMushroomCluster(mcx, mcz, 4 + Math.floor(rnd() * 3), rnd() < 0.35);
+  };
+  const addMossyStump = (x, z, rad = 0.48) => {
+    // Sample perimeter heights so stump root skirt sits grounded even on sloping forest banks.
+    const yC = renderHeight(x, z);
+    const yMin = Math.min(
+      yC,
+      renderHeight(x + rad, z), renderHeight(x - rad, z),
+      renderHeight(x, z + rad), renderHeight(x, z - rad),
+    );
+    const h = 0.55 + rnd() * 0.45;
+    const ry = rnd() * 6.283185;
+    const seed = rnd();
+    for (let r = 0; r < 4; r++) rnd();
+    ugStumps.push([+x.toFixed(2), +(yMin - 0.04).toFixed(3), +z.toFixed(2), +rad.toFixed(3), +h.toFixed(3), +ry.toFixed(4), +seed.toFixed(4)]);
+    addMushroomCluster(x + rad * 1.3, z + rad * 0.6, 3 + Math.floor(rnd() * 3), rnd() < 0.4);
+  };
+
+  // 1. Hero trailside woodland features strictly inside deep forest stretches (undergrowth.js lines 470-507).
+  let heroPlaced = 0;
+  for (let i = 10; i < tPts.length - 10; i += 6) {
+    const [px, pz] = tPts[i];
+    if (i < 55) continue;
+    const f = sampleForest(px + 12, pz) + sampleForest(px - 12, pz) + sampleForest(px, pz);
+    if (f < 2.05 || nearBench(px, pz)) continue;
+    const [qx, qz] = tPts[Math.min(tPts.length - 1, i + 4)];
+    const tx = qx - px, tz = qz - pz, tl = Math.hypot(tx, tz) || 1;
+    const sx = -tz / tl, sz = tx / tl;
+    const side = (i % 12 === 0) ? 1 : -1;
+    const off = 2.0 + rnd() * 3.0;
+    const x = px + sx * off * side, z = pz + sz * off * side;
+    if (renderHeight(x, z) < meta.waterLevel + 1.5) continue;
+    const kind = heroPlaced % 4;
+    if (kind === 0) {
+      addMossyLog(x, z, Math.atan2(tz, tx) + (rnd() - 0.5) * 0.9, 2.8 + rnd() * 3.0, 0.24 + rnd() * 0.14);
+    } else if (kind === 1) {
+      addMossyStump(x, z, 0.38 + rnd() * 0.24);
+      addMushroomCluster(x - sx * side * 0.9, z - sz * side * 0.9, 4, true);
+    } else if (kind === 2) {
+      addMossyStump(x, z, 0.44 + rnd() * 0.22);
+      addMushroomCluster(x - sx * side * 0.7, z - sz * side * 0.7, 4, false);
+    } else {
+      for (let b = 0; b < 3; b++) {
+        const sc = (b === 0 ? 1.15 : 0.62) + rnd() * 0.75;
+        const rot = rnd() * 6.28;
+        const bx = x + (b === 0 ? 0 : (rnd() - 0.5) * 2.6), bz = z + (b === 0 ? 0 : (rnd() - 0.5) * 2.6);
+        pushPropStone(bx, renderHeight(bx, bz) - sc * 0.24, bz, sc * 1.15, sc * 0.78, sc, rot, 0, 0, (heroPlaced + b) % 3);
+      }
+      addMushroomCluster(x - sx * side * 1.1, z - sz * side * 1.1, 4, false);
+    }
+    heroPlaced++;
+    if (heroPlaced >= 110) break;
+  }
+
+  // 2. Scattered deeper-forest nurse logs (undergrowth.js lines 510-521).
+  // Keep cottage yard and trailhead meadow clear (mirrors cottageClear scenery edit + i < 55 guard).
+  let placed = 0;
+  for (let k = 0; k < 2400 && placed < 50; k++) {
+    const i = Math.floor(rnd() * tPts.length);
+    const [px, pz] = tPts[i];
+    const a = rnd() * 6.28, r = 7 + rnd() * 26;
+    const x = px + Math.cos(a) * r, z = pz + Math.sin(a) * r;
+    if (i < 55 || Math.hypot(x - hcx, z - hcz) < 48) continue;
+    if (sampleForest(x, z) < 0.55 || nearBench(x, z)) continue;
+    if (sampleTrailAt(x, z) > 0.01) continue;
+    if (renderHeight(x, z) < meta.waterLevel + 1) continue;
+    addMossyLog(x, z, rnd() * Math.PI, 2.6 + rnd() * 3.8, 0.22 + rnd() * 0.18);
+    placed++;
+  }
+}
+
+// Forest canopy light shafts (undergrowth.js LightShafts._buildGeo, low tier = 28 shafts).
+const ugShafts = []; // [x, y, z, width, seed]
+{
+  const rnd = mulberry32(808);
+  const count = 28;
+  const heroIdx = extras.forestIdx ?? -1;
+  if (heroIdx >= 0 && heroIdx < tPts.length - 18) {
+    for (const [stepOff, latOff, wB] of [
+      [6, -1.2, 4.2], [11, 0.8, 4.8], [16, -0.6, 5.2], [21, 1.4, 5.4], [26, 0.0, 6.0], [32, -1.0, 5.8],
+    ]) {
+      const idx = Math.min(tPts.length - 2, heroIdx + stepOff);
+      const [px, pz] = tPts[idx], [qx, qz] = tPts[idx + 1];
+      const dx = qx - px, dz = qz - pz, dl = Math.hypot(dx, dz) || 1;
+      const x = px - dz / dl * latOff, z = pz + dx / dl * latOff;
+      ugShafts.push([+x.toFixed(2), +renderHeight(x, z).toFixed(3), +z.toFixed(2), +wB.toFixed(2), +rnd().toFixed(4)]);
+    }
+  }
+  for (let i = 0; i < tPts.length && ugShafts.length < count * 0.72; i += 7) {
+    const [px, pz] = tPts[i];
+    if (sampleForest(px + 10, pz) + sampleForest(px - 10, pz) + sampleForest(px, pz) < 1.75) continue;
+    for (let b = 0; b < 2 && ugShafts.length < count * 0.72; b++) {
+      const x = px + (rnd() - 0.5) * 16, z = pz + (rnd() - 0.5) * 16;
+      if (sampleForest(x, z) < 0.58) continue;
+      ugShafts.push([+x.toFixed(2), +renderHeight(x, z).toFixed(3), +z.toFixed(2), +(3.0 + rnd() * 3.4).toFixed(2), +rnd().toFixed(4)]);
+    }
+  }
+  for (let k = 0; k < 2500 && ugShafts.length < count; k++) {
+    const i = Math.floor(rnd() * tPts.length);
+    const [px, pz] = tPts[i];
+    if (sampleForest(px + 10, pz) + sampleForest(px - 10, pz) < 1.35) continue;
+    const x = px + (rnd() - 0.5) * 26, z = pz + (rnd() - 0.5) * 26;
+    if (sampleForest(x, z) < 0.58) continue;
+    ugShafts.push([+x.toFixed(2), +renderHeight(x, z).toFixed(3), +z.toFixed(2), +(2.8 + rnd() * 3.6).toFixed(2), +rnd().toFixed(4)]);
+  }
+}
+
+// Pack mushrooms.bin: 36 bytes per mushroom (9 float32 little-endian).
+const mushBuf = Buffer.alloc(ugMushrooms.length * 36);
+for (let i = 0; i < ugMushrooms.length; i++) {
+  const rec = ugMushrooms[i];
+  for (let k = 0; k < 9; k++) mushBuf.writeFloatLE(rec[k], i * 36 + k * 4);
+}
+console.log(`undergrowth: ${ugLogs.length} mossy logs, ${ugStumps.length} stumps, ${ugMushrooms.length} mushrooms (${(mushBuf.length / 1024).toFixed(1)} KB), ${ugShafts.length} light shafts`);
+
+// Pack rocks.bin: 40 bytes per rock (10 float32 little-endian).
 const rockBuf = Buffer.alloc(rockRecords.length * 40);
 for (let i = 0; i < rockRecords.length; i++) {
   const rec = rockRecords[i];
   for (let k = 0; k < 10; k++) rockBuf.writeFloatLE(rec[k], i * 40 + k * 4);
 }
-console.log(`rocks: ${rCount} canonical + ${rockRecords.length - rCount} prop/cairn stones = ${rockRecords.length} total (${(rockBuf.length / 1024).toFixed(1)} KB)`);
+console.log(`rocks: ${rCount} canonical + ${rockRecords.length - rCount} prop/cairn/woodland stones = ${rockRecords.length} total (${(rockBuf.length / 1024).toFixed(1)} KB)`);
 
 // W3 camera poses (exact matches to capture.js / shots.json + close-up inspection views)
 {
@@ -774,7 +946,77 @@ console.log(`rocks: ${rCount} canonical + ${rockRecords.length - rCount} prop/ca
   webPoses.stops.saddle = makePose('saddle', b1.x, b1.z, Math.atan2(-Math.sin(b1.ry), -Math.cos(b1.ry)), -0.02);
   const b2 = benches[2];
   webPoses.stops.summit = makePose('summit', b2.x, b2.z, Math.atan2(-Math.sin(b2.ry), -Math.cos(b2.ry)), -0.07);
+
+  // W4 forest_floor close-up: pick a hero mossy log near forestIdx with a clean, tree-free
+  // sightline from the trail, framing mossy log, toadstools/chanterelles, and painted ferns up close.
+  {
+    const fIdx = extras.forestIdx ?? 1451;
+    const [fx0, fz0] = tAt(fIdx);
+    const segClear = (ax, az, bx, bz) => {
+      const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+      for (const ti of keep) {
+        if (kinds[ti] === 3) continue;
+        const tx = field(0, ti), tz = field(2, ti);
+        const t = Math.max(0, Math.min(1, ((tx - ax) * dx + (tz - az) * dz) / l2));
+        const d = Math.hypot(tx - (ax + dx * t), tz - (az + dz * t));
+        if (d < 2.2) return false;
+      }
+      return true;
+    };
+    const sortedLogs = [...ugLogs].sort((a, b) => Math.hypot(a[0] - fx0, a[2] - fz0) - Math.hypot(b[0] - fx0, b[2] - fz0));
+    let chosen = null;
+    for (const lg of sortedLogs.slice(0, 12)) {
+      const mcx = lg[8] ?? lg[0], mcz = lg[9] ?? lg[2];
+      // Stand ~3.8 m out on the mushroom-cluster side of the log so mushrooms sit in front of the mossy trunk.
+      const sx = mcx - lg[0], sz = mcz - lg[2], sl = Math.hypot(sx, sz) || 1;
+      const candX = lg[0] + (sx / sl) * 4.0, candZ = lg[2] + (sz / sl) * 4.0;
+      if (segClear(candX, candZ, lg[0], lg[2])) {
+        chosen = { lg, camX: candX, camZ: candZ, tx: 0.6 * lg[0] + 0.4 * mcx, tz: 0.6 * lg[2] + 0.4 * mcz };
+        break;
+      }
+      const ti = tNearestIdx(lg[0], lg[2]);
+      for (const stepOff of [-3, 3, -5, 5, 0]) {
+        const [tpx, tpz] = tAt(ti + stepOff);
+        const d = Math.hypot(lg[0] - tpx, lg[2] - tpz);
+        if (d < 2.8 || d > 6.8) continue;
+        if (segClear(tpx, tpz, lg[0], lg[2])) {
+          chosen = { lg, camX: tpx, camZ: tpz, tx: lg[0], tz: lg[2] };
+          break;
+        }
+      }
+      if (chosen) break;
+    }
+    if (!chosen) {
+      const lg = sortedLogs[0];
+      const ti = tNearestIdx(lg[0], lg[2]);
+      const [tpx, tpz] = tAt(Math.max(0, ti - 3));
+      chosen = { lg, camX: tpx, camZ: tpz, tx: lg[0], tz: lg[2] };
+    }
+    const { lg, camX, camZ, tx, tz } = chosen;
+    const camEye = renderHeight(camX, camZ) + eyeH;
+    const tgtY = lg[1] + 0.16;
+    const pitch = Math.atan2(tgtY - camEye, Math.hypot(tx - camX, tz - camZ));
+    webPoses.stops.forest_floor = makePose('forest_floor', camX, camZ, yawToward(camX, camZ, tx, tz), pitch);
+
+    // W4 shafts view: forest cathedral corridor looking slightly up along the sunbeams.
+    const sPos = webPoses.stops.forest.position;
+    webPoses.stops.shafts = makePose('shafts', sPos[0], sPos[2], webPoses.stops.forest.yaw, 0.11);
+  }
 }
+
+const undergrowth = {
+  forestIdx: extras.forestIdx ?? 1451,
+  ferns: { tileSize: 16, maxCount: 768, seed: 55, lowNear: 160, lowRadius: 32 },
+  logs: ugLogs,
+  stumps: ugStumps,
+  shafts: ugShafts,
+  mushrooms: {
+    file: 'mushrooms.bin',
+    count: ugMushrooms.length,
+    strideBytes: 36,
+    layout: '9 float32 little-endian per mushroom: x, y, z, scale, stem_h, cap_r, tilt, rot, is_golden',
+  },
+};
 
 const props = {
   house,
@@ -804,6 +1046,7 @@ put('trees.bin', treeBuf);
 put('trees_rank.bin', rankOut);
 put('colliders.bin', colBuf);
 put('rocks.bin', rockBuf);
+put('mushrooms.bin', mushBuf);
 {
   const signpostOut = path.join(OUT, 'signpost.pngdata');
   const rs = spawnSync('gpu-run', [process.execPath, path.join(HERE, 'render_signpost.mjs'), SW, signpostOut, JSON.stringify(signRows)], { stdio: 'inherit' });
@@ -849,6 +1092,7 @@ const webMeta = {
   },
   signpostTex: { file: 'signpost.pngdata', width: 512, height: 384, rows: 3 },
   props,
+  undergrowth,
   poses: webPoses,
   walk,
   sizes,

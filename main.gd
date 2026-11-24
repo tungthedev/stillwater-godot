@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "w3-2"
+const BUILD := "w4-1"
 
 
 func _ready() -> void:
@@ -62,6 +62,11 @@ func _ready() -> void:
 		env_sys.apply_to(m)
 	if Flags.has("noprops") or Flags.has("no-props"):
 		props_sys.set_on(false)
+	var undergrowth_sys := _add(scene, "undergrowth", world)
+	for m in undergrowth_sys.materials():
+		env_sys.apply_to(m)
+	if Flags.has("noundergrowth") or Flags.has("no-undergrowth"):
+		undergrowth_sys.set_on(false)
 	var clouds_sys := _add(scene, "clouds", world)
 	for m in clouds_sys.materials():
 		env_sys.apply_to(m)
@@ -76,6 +81,12 @@ func _ready() -> void:
 		env_sys.apply_to(m)
 	if Flags.has("nograss") or Flags.has("no-grass"):
 		grass_sys.set_on(false)
+	var air_sys := _add(scene, "air", world)
+	air_sys.set_env(env_sys)
+	for m in air_sys.materials():
+		env_sys.apply_to(m)
+	if Flags.has("noair") or Flags.has("no-air"):
+		air_sys.set_on(false)
 	var cam := Camera3D.new()
 	cam.name = "camera"
 	cam.set_script(load("res://systems/walk_camera.gd"))
@@ -102,16 +113,16 @@ func _ready() -> void:
 		bench_sys.reported = true
 	ui.name = "ui"
 	ui.set_script(load("res://systems/ui.gd"))
-	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "sweep": sweep_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "water": water_sys, "props": props_sys, "post": post, "build": BUILD, "game": game})
+	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "sweep": sweep_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "post": post, "build": BUILD, "game": game})
 	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
-	bench_sys.profiled = {"terrain": terrain_sys, "water": water_sys, "props": props_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
+	bench_sys.profiled = {"terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "grass": grass_sys, "trees": trees_sys, "camera": cam, "sky": env_sys, "post": post, "ui": ui, "bench": bench_sys}
 	if sweep_sys != null:
-		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "water": water_sys, "props": props_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "ui": ui, "bench": bench_sys, "settings": ui.settings, "profiled": bench_sys.profiled})
+		sweep_sys.setup({"env": env_sys, "post": post, "terrain": terrain_sys, "water": water_sys, "props": props_sys, "undergrowth": undergrowth_sys, "air": air_sys, "trees": trees_sys, "grass": grass_sys, "clouds": clouds_sys, "cam": cam, "ui": ui, "bench": bench_sys, "settings": ui.settings, "profiled": bench_sys.profiled})
 	add_child(ui)
 	if game:
 		_add_game(world, scene, cam, bench_sys, ui, env_sys, props_sys)
-	print("BUILD %s game=%s style=%s ground=%s grass_mode=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s water=%s water_tris=%d props=%s props_rocks=%d pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
-		BUILD, "on" if game else "off", env_sys.style, terrain_sys.ground_mode(), grass_sys.grass_mode(), t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", "on" if water_sys.is_on() else "off", water_sys.last_tris, "on" if props_sys.is_on() else "off", props_sys.total_rocks, cam.mode(),
+	print("BUILD %s game=%s style=%s ground=%s grass_mode=%s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s water=%s water_tris=%d props=%s props_rocks=%d undergrowth=%s air=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs cloud_tris=%d renderer=%s" % [
+		BUILD, "on" if game else "off", env_sys.style, terrain_sys.ground_mode(), grass_sys.grass_mode(), t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", "on" if water_sys.is_on() else "off", water_sys.last_tris, "on" if props_sys.is_on() else "off", props_sys.total_rocks, "on" if undergrowth_sys.is_on() else "off", "on" if air_sys.is_on() else "off", cam.mode(),
 		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
 		clouds_sys.puffs, clouds_sys.tris, Flags.gpu_name()])
 	var bench_shot := Flags.value("bench-shot")

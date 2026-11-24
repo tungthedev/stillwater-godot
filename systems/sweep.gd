@@ -28,6 +28,8 @@ var post: Node
 var terrain_sys: Node
 var water_sys: Node
 var props_sys: Node
+var undergrowth_sys: Node
+var air_sys: Node
 var trees_sys: Node
 var grass_sys: Node
 var clouds_sys: Node
@@ -77,6 +79,8 @@ var _base_grass_painted := true
 var _base_trees := true
 var _base_water := true
 var _base_props := true
+var _base_undergrowth := true
+var _base_air := true
 var _base_clouds := true
 var _base_cloud_billboard := false
 var _base_sky_clouds := true
@@ -97,6 +101,8 @@ func setup(nodes: Dictionary) -> void:
 	terrain_sys = nodes.terrain
 	water_sys = nodes.get("water", null)
 	props_sys = nodes.get("props", null)
+	undergrowth_sys = nodes.get("undergrowth", null)
+	air_sys = nodes.get("air", null)
 	trees_sys = nodes.trees
 	grass_sys = nodes.grass
 	clouds_sys = nodes.clouds
@@ -133,6 +139,8 @@ func start() -> void:
 	_base_trees = trees_sys.is_on()
 	_base_water = water_sys != null and water_sys.is_on()
 	_base_props = props_sys != null and props_sys.is_on()
+	_base_undergrowth = undergrowth_sys != null and undergrowth_sys.is_on()
+	_base_air = air_sys != null and air_sys.is_on()
 	_base_cloud_billboard = clouds_sys.is_on()
 	_base_sky_clouds = env_sys.sky_clouds_on
 	_base_clouds = _base_cloud_billboard or _base_sky_clouds
@@ -226,6 +234,17 @@ func _build_variants() -> void:
 		_variants.append({"id": "props_off", "label": "props off", "disjoint": true})
 	else:
 		_skipped.append("props_off (base props off)")
+	if _base_undergrowth:
+		_variants.append({"id": "undergrowth_off", "label": "undergrowth off", "disjoint": true})
+	else:
+		_skipped.append("undergrowth_off (base undergrowth off)")
+	if _base_air:
+		_variants.append({"id": "air_off", "label": "air off", "disjoint": true})
+		_variants.append({"id": "shafts_off", "label": "shafts off", "disjoint": false})
+		_variants.append({"id": "motes_off", "label": "motes off", "disjoint": false})
+		_variants.append({"id": "spray_off", "label": "spray off", "disjoint": false})
+	else:
+		_skipped.append("air_off (base air off)")
 	_variants.append({"id": "sky_flat", "label": "sky flat", "disjoint": true})
 	if _base_clouds:
 		_variants.append({"id": "clouds_off", "label": "clouds off", "disjoint": true})
@@ -253,6 +272,10 @@ func _set_systems_frozen(v: bool) -> void:
 	trees_sys.set_frozen(v)
 	if props_sys != null:
 		props_sys.set_frozen(v)
+	if undergrowth_sys != null:
+		undergrowth_sys.set_frozen(v)
+	if air_sys != null:
+		air_sys.set_frozen(v)
 	env_sys.set_frozen(v)
 	post.set_frozen(v)
 	cam.set_process(not v)
@@ -280,6 +303,13 @@ func _reset_to_base() -> void:
 		water_sys.set_on(_base_water)
 	if props_sys != null:
 		props_sys.set_on(_base_props)
+	if undergrowth_sys != null:
+		undergrowth_sys.set_on(_base_undergrowth)
+	if air_sys != null:
+		air_sys.set_on(_base_air)
+		air_sys.set_shafts_on(true)
+		air_sys.set_motes_on(true)
+		air_sys.set_spray_on(true)
 	env_sys.set_sky_flat(false)
 	env_sys.set_cirrus_on(true)
 	env_sys.set_sky_clouds_on(_base_sky_clouds)
@@ -302,6 +332,10 @@ func _apply_variant(id: String) -> void:
 				water_sys.set_on(false)
 			if props_sys != null:
 				props_sys.set_on(false)
+			if undergrowth_sys != null:
+				undergrowth_sys.set_on(false)
+			if air_sys != null:
+				air_sys.set_on(false)
 			grass_sys.set_on(false)
 			trees_sys.set_on(false)
 			trees_sys.set_impostors_on(false)
@@ -350,6 +384,21 @@ func _apply_variant(id: String) -> void:
 		"props_off":
 			if props_sys != null:
 				props_sys.set_on(false)
+		"undergrowth_off":
+			if undergrowth_sys != null:
+				undergrowth_sys.set_on(false)
+		"air_off":
+			if air_sys != null:
+				air_sys.set_on(false)
+		"shafts_off":
+			if air_sys != null:
+				air_sys.set_shafts_on(false)
+		"motes_off":
+			if air_sys != null:
+				air_sys.set_motes_on(false)
+		"spray_off":
+			if air_sys != null:
+				air_sys.set_spray_on(false)
 		"sky_flat":
 			env_sys.set_sky_flat(true)
 		"clouds_off":

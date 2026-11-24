@@ -24,6 +24,8 @@ var terrain_sys: Node
 var trees_sys: Node
 var water_sys: Node
 var props_sys: Node
+var undergrowth_sys: Node
+var air_sys: Node
 var post: Node
 var build_id := ""
 # In the game the readout and levers hide behind G / the pause sheet's Perf button (?debug shows
@@ -62,6 +64,8 @@ func setup(nodes: Dictionary) -> void:
 	trees_sys = nodes.trees
 	water_sys = nodes.get("water", null)
 	props_sys = nodes.get("props", null)
+	undergrowth_sys = nodes.get("undergrowth", null)
+	air_sys = nodes.get("air", null)
 	post = nodes.post
 	build_id = nodes.build
 	game = nodes.get("game", false)
@@ -145,6 +149,12 @@ func _apply_dist_dens(rebuild_grass: bool) -> void:
 	trees_sys.set_levers(DENS[dens_i], d.radii)
 	if props_sys != null:
 		props_sys.set_dist_scale(d.radii)
+	if undergrowth_sys != null:
+		undergrowth_sys.set_dist_scale(d.radii)
+		undergrowth_sys.set_density(DENS[dens_i])
+	if air_sys != null:
+		air_sys.set_dist_scale(d.radii)
+		air_sys.set_density(DENS[dens_i])
 	if rebuild_grass:
 		grass_sys.set_density(DENS[dens_i])
 
@@ -249,6 +259,12 @@ func settings() -> Dictionary:
 		"props": props_sys != null and props_sys.is_on(),
 		"props_tris": props_sys.last_tris if props_sys != null else 0,
 		"props_draws": props_sys.last_draws if props_sys != null else 0,
+		"undergrowth": undergrowth_sys != null and undergrowth_sys.is_on(),
+		"undergrowth_tris": undergrowth_sys.last_tris if undergrowth_sys != null else 0,
+		"undergrowth_draws": undergrowth_sys.last_draws if undergrowth_sys != null else 0,
+		"air": air_sys != null and air_sys.is_on(),
+		"air_tris": air_sys.last_tris if air_sys != null else 0,
+		"air_draws": air_sys.last_draws if air_sys != null else 0,
 		"style": env_sys.style,
 		"ground": terrain_sys.ground_mode(),
 		"grass_mode": grass_sys.grass_mode(),
