@@ -395,7 +395,7 @@ func _show_sweep_results(r: Dictionary) -> void:
 	for p_any in r.poses:
 		var p: Dictionary = p_any
 		var drift: float = float(p.drift_ms)
-		var hdr := "%s  base %.1f→%.1f ms (%+.1f drift) · sum %.1f ms (%.0f%%)" % [
+		var hdr := "%s  base %.1f -> %.1f ms (%+.1f drift) · sum %.1f ms (%.0f%%)" % [
 			str(p.pose).capitalize(), float(p.base_start_ms), float(p.base_end_ms), drift,
 			-float(p.additive_save_ms), -float(p.additive_share_pct)]
 		panel_box.add_child(_text(hdr, 11, Color(0.96, 0.90, 0.62)))

@@ -61,7 +61,9 @@ try {
     console.log('  variant          med_ms  base_ms  delta_ms  delta_%   draws    tris  gpu_avg');
     for (const v of p.variants) {
       const gpu = typeof v.gpu_avg === 'number' && v.gpu_avg >= 0 ? v.gpu_avg.toFixed(1).padStart(7) : '    n/a';
-      console.log(`  ${v.label.padEnd(15)} ${v.median_ms.toFixed(1).padStart(7)}  ${v.base_ms.toFixed(1).padStart(7)}  ${(v.delta_ms >= 0 ? '+' : '') + v.delta_ms.toFixed(1).padStart(6)}  ${((v.delta_pct >= 0 ? '+' : '') + v.delta_pct.toFixed(1) + '%').padStart(7)}  ${String(v.draws).padStart(6)}  ${String(v.tris).padStart(7)}  ${gpu}`);
+      const dMs = `${v.delta_ms >= 0 ? '+' : ''}${v.delta_ms.toFixed(1)}`.padStart(7);
+      const dPct = `${v.delta_pct >= 0 ? '+' : ''}${v.delta_pct.toFixed(1)}%`.padStart(7);
+      console.log(`  ${v.label.padEnd(15)} ${v.median_ms.toFixed(1).padStart(7)}  ${v.base_ms.toFixed(1).padStart(7)}  ${dMs}  ${dPct}  ${String(v.draws).padStart(6)}  ${String(v.tris).padStart(7)}  ${gpu}`);
     }
   }
   if (errors.length) {
