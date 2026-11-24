@@ -23,6 +23,12 @@ const KINDS: Array[String] = ["oak", "round", "pine", "bush", "poplar", "larch"]
 const IMP_INDEX: Array[int] = [0, 1, 2, -1, 3, 4]
 const BUSH := 3
 const MESH_DIR := "res://data/trees"
+# Walking streams cells in: batches of cells this far beyond the hero / mid radii are built ahead,
+# nearest first, at most BUILD_BUDGET_US of script per frame, so a cell is ready before it is
+# needed. A cell needed before its turn still builds at once (no pop-in).
+const PREFETCH_HERO := 24.0
+const PREFETCH_MID := 48.0
+const BUILD_BUDGET_US := 2000
 
 var world: RefCounted
 var hero_r := 12.0
@@ -75,6 +81,10 @@ var far_nodes: Array[MultiMeshInstance3D] = []
 var far_total := 0
 var hero_oaks: MultiMeshInstance3D
 var lod_center := Vector3(1e9, 0.0, 1e9)
+# Cells to build ahead: [distance, hero, key], nearest first.
+var _prefetch: Array = []
+# Slowest single cell build so far (walk checks).
+var build_max_us := 0
 # Per drawn MultiMeshInstance3D: [cull box, triangles per draw], filled on first use.
 var _draw_info := {}
 
@@ -413,6 +423,13 @@ func _build_hero_oaks(spots: Array) -> void:
 
 
 func _make_batch(g: Dictionary, key: Vector2i, hero: bool) -> Dictionary:
+	var t0 := Time.get_ticks_usec()
+	var b := _build_batch(g, key, hero)
+	build_max_us = maxi(build_max_us, Time.get_ticks_usec() - t0)
+	return b
+
+
+func _build_batch(g: Dictionary, key: Vector2i, hero: bool) -> Dictionary:
 	var size: float = g.size
 	var c := (key.y - int(g.iz0)) * int(g.w) + key.x - int(g.ix0)
 	var start: PackedInt32Array = g.start
@@ -507,6 +524,28 @@ func _sync(g: Dictionary, batches: Dictionary, active: Dictionary, want: Diction
 	return Vector2i(n, imp)
 
 
+func _plan_prefetch(cam_pos: Vector3) -> void:
+	_prefetch.clear()
+	for hero in [true, false]:
+		var g: Dictionary = hero_grid if hero else near_grid
+		var batches: Dictionary = hero_batches if hero else mid_batches
+		var r: float = hero_r + PREFETCH_HERO if hero else mid_r + PREFETCH_MID
+		for key in _cells_in_radius(g, cam_pos.x, cam_pos.z, r, {}):
+			if not batches.has(key):
+				var size: float = g.size
+				_prefetch.append([_cell_distance((key.x + 0.5) * size, (key.y + 0.5) * size, size, cam_pos.x, cam_pos.z), hero, key])
+	_prefetch.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	_prefetch.reverse()
+
+
+func _drain_prefetch(t0: int) -> void:
+	while not _prefetch.is_empty() and Time.get_ticks_usec() - t0 < BUILD_BUDGET_US:
+		var job: Array = _prefetch.pop_back()
+		var batches: Dictionary = hero_batches if job[1] else mid_batches
+		if not batches.has(job[2]):
+			batches[job[2]] = _make_batch(hero_grid if job[1] else near_grid, job[2], job[1])
+
+
 func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	var dx := cam_pos.x - lod_center.x
 	var dz := cam_pos.z - lod_center.z
@@ -518,6 +557,7 @@ func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	var h := _sync(hero_grid, hero_batches, hero_active, hero_want, true, cam_pos.x, cam_pos.z)
 	var m := _sync(near_grid, mid_batches, mid_active, mid_want, false, cam_pos.x, cam_pos.z)
 	_write_cell_flags()
+	_plan_prefetch(cam_pos)
 	stats.hero = h.x
 	stats.mid = m.x - h.x
 	stats.near_cells = mid_want.size()
@@ -540,6 +580,7 @@ func set_levers(dens: float, dist: float) -> void:
 			remove_child(child)
 	hero_batches.clear()
 	mid_batches.clear()
+	_prefetch.clear()
 	_draw_info.clear()
 	hero_active.clear()
 	mid_active.clear()
@@ -563,6 +604,8 @@ func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and count > 0:
 		update_lod(cam.global_position)
+		if on:
+			_drain_prefetch(t0)
 		var tc := Time.get_ticks_usec()
 		count_drawn(cam)
 		count_us = Time.get_ticks_usec() - tc

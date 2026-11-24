@@ -37,6 +37,7 @@ const FLOWERS := {
 	"near_tris": 4, "far_tris": 4,
 	"pad_xz": 0.9, "pad_down": 0.5, "pad_up": 2.0, "empty_below": 0.2,
 }
+const NEW_TILES_PER_FRAME := 4
 # Height in the atlas is 16 bits over 64 m above this much under the tile's lowest sample.
 const BASE_DROP := 4.0
 
@@ -336,9 +337,16 @@ class Ring:
 		for t in tiles:
 			active[t.key] = true
 		var bake_any := false
+		var added := 0
 		for t in tiles:
 			if by_key.has(t.key):
 				continue
+			# Tiles enter nearest first and at most NEW_TILES_PER_FRAME a frame, so a walk across a
+			# tile row (or a teleport) spreads its ground sampling and bakes over a few frames; the
+			# ones left wait at the ring's edge, where blades are thinnest. Headless counts fill at once.
+			if added >= NEW_TILES_PER_FRAME and not assume_baked:
+				break
+			added += 1
 			var s := _evict(active, cam.x, cam.z)
 			if s.key != null:
 				by_key.erase(s.key)
@@ -354,12 +362,16 @@ class Ring:
 			_write_slot(s)
 		if bake_any:
 			vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		var tu := Time.get_ticks_usec()
 		if slot_dirty_tex:
 			slot_tex.update(slot_img)
 			slot_dirty_tex = false
+		var slot_us := Time.get_ticks_usec() - tu
 		near_vis = 0
 		far_vis = 0
 		for t in tiles:
+			if not by_key.has(t.key):
+				continue
 			var s: Dictionary = by_key[t.key]
 			if s.empty or not s.ready or not _box_visible(s.box, planes):
 				continue
@@ -373,7 +385,8 @@ class Ring:
 		var tp := Time.get_ticks_usec()
 		draw_n.push(buf_near, near_vis)
 		draw_f.push(buf_far, far_vis)
-		push_us = Time.get_ticks_usec() - tp
+		# GPU uploads: the instance buffers and the slot table.
+		push_us = Time.get_ticks_usec() - tp + slot_us
 		last_tris = near_vis * draw_near * int(cfg.near_tris) + far_vis * draw_far * int(cfg.far_tris)
 		last_draws = (1 if near_vis > 0 else 0) + (1 if far_vis > 0 else 0)
 
