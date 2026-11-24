@@ -23,8 +23,8 @@ M (music). The clock stays at 16:00.
 
 - Ground is the rendered height (near map blended into the far map past 1828 m), not the near map
   alone; they differ only between 1828 m and the 1850 m boundary.
-- Trees block with the full canonical list, as in Stillwater on every tier, so at `low` about 39%
-  of the trunks that block are not drawn (147,463 colliders, 90,010 drawn trees, bushes excluded).
+- Trees block with the full canonical list, as in Stillwater on every tier, so at `low` about 45%
+  of the trunks that block are not drawn (147,463 non-bush colliders, 81,202 of them drawn).
 - Benches, rocks, props, the village and the bridge do not block or seat yet: they arrive with W3
   through `session.interactables` (benches) and `player.colliders` / `player.ground_override`.
 - The pause sheet shows a Perf button where Stillwater shows the quality picker (only `low` exists).
