@@ -18,6 +18,7 @@ const DENS: Array[float] = [1.0, 0.75, 0.5, 0.25]
 var env_sys: Node
 var grass_sys: Node
 var bench_sys: Node
+var sweep_sys: Node
 var cam: Camera3D
 var terrain_sys: Node
 var trees_sys: Node
@@ -27,6 +28,9 @@ var build_id := ""
 # them at load); bench and pose pages show them as before.
 var game := false
 var dev_on := true
+var _showing_sweep := false
+var _panel_sb: StyleBoxFlat
+var frozen := false
 
 var dist_i := 0
 var dens_i := 0
@@ -42,6 +46,7 @@ func setup(nodes: Dictionary) -> void:
 	env_sys = nodes.env
 	grass_sys = nodes.grass
 	bench_sys = nodes.bench
+	sweep_sys = nodes.get("sweep", null)
 	cam = nodes.cam
 	terrain_sys = nodes.terrain
 	trees_sys = nodes.trees
@@ -84,6 +89,8 @@ func _ready() -> void:
 	add_child(grid)
 	_build_panel()
 	bench_sys.finished.connect(_show_results)
+	if sweep_sys != null:
+		sweep_sys.finished.connect(_show_sweep_results)
 
 	_apply_start_flags()
 	if game:
@@ -92,7 +99,9 @@ func _ready() -> void:
 	_refresh()
 	# Look-check screenshots hide the overlay: ?noui on Web, `-- --no-ui` on desktop.
 	visible = not (Flags.has("noui") or Flags.has("no-ui"))
-	if Flags.has("bench"):
+	if sweep_sys != null:
+		_start_sweep.call_deferred()
+	elif Flags.has("bench"):
 		_start_bench.call_deferred()
 
 
@@ -155,16 +164,33 @@ func toggle_dev() -> void:
 
 
 func _show_dev() -> void:
-	label.visible = dev_on
-	grid.visible = dev_on and not bench_sys.running
+	var busy: bool = bool(bench_sys.running) or (sweep_sys != null and bool(sweep_sys.running))
+	var sweep_sheet: bool = _showing_sweep and panel.visible
+	label.visible = dev_on and not sweep_sheet
+	grid.visible = dev_on and not busy and not sweep_sheet
 	if not dev_on:
 		panel.visible = false
 
 
 func _start_bench() -> void:
+	_showing_sweep = false
 	panel.visible = false
 	grid.visible = false
 	bench_sys.start()
+
+
+func _start_sweep() -> void:
+	_showing_sweep = false
+	panel.visible = false
+	grid.visible = false
+	sweep_sys.start()
+
+
+func _run_again() -> void:
+	if _showing_sweep and sweep_sys != null:
+		_start_sweep()
+	else:
+		_start_bench()
 
 
 func _refresh() -> void:
@@ -207,11 +233,11 @@ func settings() -> Dictionary:
 
 func _build_panel() -> void:
 	panel = PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.06, 0.07, 0.09, 0.93)
-	sb.set_corner_radius_all(10)
-	sb.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", sb)
+	_panel_sb = StyleBoxFlat.new()
+	_panel_sb.bg_color = Color(0.06, 0.07, 0.09, 0.93)
+	_panel_sb.set_corner_radius_all(10)
+	_panel_sb.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", _panel_sb)
 	# A sheet between the readout and the lever grid; the results scroll, the buttons stay.
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	panel.offset_left = 6
@@ -232,7 +258,7 @@ func _build_panel() -> void:
 	scroll.add_child(panel_box)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	for pair in [["Close", _close_panel], ["Run again", _start_bench]]:
+	for pair in [["Close", _close_panel], ["Run again", _run_again]]:
 		var b := Button.new()
 		b.text = pair[0]
 		b.custom_minimum_size = Vector2(0, 40)
@@ -248,6 +274,8 @@ func _build_panel() -> void:
 const WIDTHS_FPS := [78, 44, 50, 50, 56, 44]
 # Fits the 354 pt inside of the panel on a 390 pt wide phone.
 const WIDTHS_MS := [60, 58, 58, 60, 54, 46]
+# 7 compact columns (332 + 12 = 344 pt) fit inside a 375 pt iPhone mini panel (355 pt inner).
+const WIDTHS_SWEEP := [94, 40, 44, 38, 40, 40, 36]
 
 
 func _row(cells: Array, size: int, col: Color, widths: Array = WIDTHS_FPS) -> HBoxContainer:
@@ -274,6 +302,16 @@ func _text(t: String, size: int, col: Color) -> Label:
 
 
 func _show_results(r: Dictionary) -> void:
+	_showing_sweep = false
+	_panel_sb.set_content_margin_all(12)
+	panel.offset_left = 6
+	panel.offset_right = -6
+	panel.offset_top = 40
+	panel.offset_bottom = grid.offset_top - 8
+	panel_box.add_theme_constant_override("separation", 5)
+	for bk in ["panel_close", "panel_run_again"]:
+		if btn.has(bk):
+			(btn[bk] as Button).custom_minimum_size = Vector2(0, 40)
 	for c in panel_box.get_children():
 		c.queue_free()
 	var ok: bool = float(r.worst_fps) >= 30.0
@@ -347,8 +385,93 @@ static func _pair(a, b) -> String:
 	return "%.1f/%.0f" % [float(a), float(b)]
 
 
+func _show_sweep_results(r: Dictionary) -> void:
+	_showing_sweep = true
+	for c in panel_box.get_children():
+		c.queue_free()
+	var safe := _read_safe()
+	_panel_sb.set_content_margin_all(6)
+	panel.offset_left = 4
+	panel.offset_right = -4
+	panel.offset_top = maxf(4.0, safe.x + 2.0)
+	panel.offset_bottom = -maxf(4.0, safe.z + 2.0)
+	panel_box.add_theme_constant_override("separation", 2)
+	for bk in ["panel_close", "panel_run_again"]:
+		if btn.has(bk):
+			(btn[bk] as Button).custom_minimum_size = Vector2(0, 30)
+	var notes: Array = r.get("notes", [])
+	var note_s := (" · " + ", ".join(PackedStringArray(notes))) if not notes.is_empty() else ""
+	panel_box.add_child(_text("GPU Sweep %s · %.0fs%s" % [str(r.build), float(r.total_s), note_s], 12, Color.WHITE))
+	panel_box.add_child(_text("%dx%d of %dx%d (dpr %s) · post %s · %s · %s" % [
+		int(r.internal[0]), int(r.internal[1]), int(r.screen[0]), int(r.screen[1]),
+		str(r.dpr), "on" if r.post else "off", str(r.target), str(r.style)], 9, Color(0.84, 0.87, 0.92)))
+	panel_box.add_child(_text("GPU: %s" % str(r.renderer), 9, Color(0.68, 0.72, 0.78)))
+	for p_any in r.poses:
+		var p: Dictionary = p_any
+		var drift: float = float(p.drift_ms)
+		var hdr := "%s base %.1f->%.1f (%+.1f) cpu %s raf %s scr %.1f phy %.1f" % [
+			str(p.pose).capitalize(), float(p.base_start_ms), float(p.base_end_ms), drift,
+			_opt_ms(p.get("base_raf_cpu_ms", -1.0)), _opt_ms(p.get("base_raf_iv_ms", -1.0)),
+			float(p.get("base_script_ms", 0.0)), float(p.get("base_phys_ms", 0.0))]
+		panel_box.add_child(_text(hdr, 9, Color(0.96, 0.90, 0.62)))
+		var tbl := VBoxContainer.new()
+		tbl.add_theme_constant_override("separation", 0)
+		tbl.add_child(_row(["variant", "med", "Δms", "%", "cpu", "raf", "scr"], 9, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
+		for v_any in p.variants:
+			var v: Dictionary = v_any
+			var d: float = float(v.delta_ms)
+			var col := Color(0.55, 0.95, 0.6) if d <= -0.8 else (Color(1.0, 0.62, 0.48) if d >= 0.8 else Color(0.92, 0.93, 0.95))
+			tbl.add_child(_row([
+				str(v.label), "%.1f" % float(v.median_ms), "%+.1f" % d, "%+.0f%%" % float(v.delta_pct),
+				_opt_ms(v.get("raf_cpu_ms", -1.0)), _opt_ms(v.get("raf_iv_ms", -1.0)),
+				"%.1f" % float(v.get("script_ms", 0.0))], 10, col, WIDTHS_SWEEP))
+		panel_box.add_child(tbl)
+	dev_on = true
+	panel.visible = true
+	_show_dev()
+	_refresh()
+
+
+static func _opt_ms(v) -> String:
+	var f := float(v)
+	return "%.1f" % f if f >= 0.0 else "-"
+
+
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
+func set_progress_text(t: String) -> void:
+	if progress != null:
+		progress.text = t
+
+
+func _read_safe() -> Vector4:
+	if not OS.has_feature("web"):
+		return Vector4.ZERO
+	var s = JavaScriptBridge.eval("(() => { const e = document.getElementById('safe'); if (!e) return ''; const st = getComputedStyle(e); return [st.paddingTop, st.paddingRight, st.paddingBottom, st.paddingLeft].map((v) => parseFloat(v) || 0).join(','); })()")
+	if s == null or str(s) == "":
+		return Vector4.ZERO
+	var p := str(s).split(",")
+	if p.size() < 4:
+		return Vector4.ZERO
+	return Vector4(float(p[0]), float(p[1]), float(p[2]), float(p[3]))
+
+
 func _close_panel() -> void:
 	panel.visible = false
+	if _showing_sweep:
+		_showing_sweep = false
+		_panel_sb.set_content_margin_all(12)
+		panel.offset_left = 6
+		panel.offset_right = -6
+		panel.offset_top = 40
+		panel.offset_bottom = grid.offset_top - 8
+		panel_box.add_theme_constant_override("separation", 5)
+		for bk in ["panel_close", "panel_run_again"]:
+			if btn.has(bk):
+				(btn[bk] as Button).custom_minimum_size = Vector2(0, 40)
+		_show_dev()
 
 
 static func _short_ua(ua: String) -> String:
@@ -363,12 +486,18 @@ var prof_us := 0
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 
 func _tick(_delta: float) -> void:
-	progress.text = ("Bench  " + bench_sys.progress) if bench_sys.running else ""
+	if sweep_sys != null and sweep_sys.running:
+		progress.text = "Sweep  " + sweep_sys.progress
+	elif bench_sys.running:
+		progress.text = "Bench  " + bench_sys.progress
+	else:
+		progress.text = ""
 	if not dev_on:
 		return
 	label.text = "%d fps  %d x %d of %d x %d  post %s  style %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [

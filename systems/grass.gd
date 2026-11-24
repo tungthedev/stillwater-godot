@@ -51,6 +51,9 @@ var _on := true
 # ?probe=terrain turns one ring's updates (and so its bakes) off to test each bake on its own.
 var update_grass := true
 var update_flowers := true
+var _grass_on := true
+var _flowers_on := true
+var frozen := false
 var _frame := 0
 var last_tris := 0
 var last_draws := 0
@@ -106,19 +109,50 @@ func is_on() -> bool:
 
 func set_on(on: bool) -> void:
 	_on = on
-	for r in [grass, flowers]:
-		r.draw_n.set_visible(on)
-		r.draw_f.set_visible(on)
+	_sync_ring_vis()
 	if not on:
 		last_tris = 0
 		last_draws = 0
+
+
+func set_grass_on(on: bool) -> void:
+	_grass_on = on
+	_sync_ring_vis()
+	if not on:
+		grass.last_tris = 0
+		grass.last_draws = 0
+		last_tris = flowers.last_tris if (_on and _flowers_on) else 0
+		last_draws = flowers.last_draws if (_on and _flowers_on) else 0
+
+
+func set_flowers_on(on: bool) -> void:
+	_flowers_on = on
+	_sync_ring_vis()
+	if not on:
+		flowers.last_tris = 0
+		flowers.last_draws = 0
+		last_tris = grass.last_tris if (_on and _grass_on) else 0
+		last_draws = grass.last_draws if (_on and _grass_on) else 0
+
+
+func _sync_ring_vis() -> void:
+	var g_vis := _on and _grass_on
+	var f_vis := _on and _flowers_on
+	grass.draw_n.set_visible(g_vis)
+	grass.draw_f.set_visible(g_vis)
+	flowers.draw_n.set_visible(f_vis)
+	flowers.draw_f.set_visible(f_vis)
+
+
+func set_frozen(v: bool) -> void:
+	frozen = v
 
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
 	push_us = 0
-	if _on and cam != null:
+	if _on and not frozen and cam != null:
 		_frame += 1
 		update_rings(cam, false)
 	prof_us = Time.get_ticks_usec() - t0
@@ -133,10 +167,18 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	grass.draw_mat.set_shader_parameter("cam_xz", cxz)
 	grass.draw_mat.set_shader_parameter("player_xz", cxz)
 	flowers.draw_mat.set_shader_parameter("cam_xz", cxz)
-	if update_grass:
+	if _grass_on and update_grass:
 		grass.update(p, planes, _frame, assume_baked)
-	if update_flowers:
+	elif not _grass_on:
+		grass.last_tris = 0
+		grass.last_draws = 0
+		grass.push_us = 0
+	if _flowers_on and update_flowers:
 		flowers.update(p, planes, _frame, assume_baked)
+	elif not _flowers_on:
+		flowers.last_tris = 0
+		flowers.last_draws = 0
+		flowers.push_us = 0
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
 	push_us = grass.push_us + flowers.push_us

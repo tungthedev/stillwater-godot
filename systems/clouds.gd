@@ -23,6 +23,7 @@ var mmi: MultiMeshInstance3D
 var painterly := true
 var puffs := 0
 var tris := 0
+var _cache := {}
 
 
 func setup(w: RefCounted) -> void:
@@ -35,9 +36,26 @@ func _ready() -> void:
 	mat.shader = load("res://shaders/clouds.gdshader")
 	mat.set_shader_parameter("noise_tex", world.noise_tex)
 	mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
-	var mesh := _octagon() if painterly else _icosphere(DETAIL)
+	mmi = MultiMeshInstance3D.new()
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mmi)
+	_apply_style(painterly)
+
+
+func _apply_style(is_painterly: bool) -> void:
+	painterly = is_painterly
+	if not _cache.has(is_painterly):
+		_cache[is_painterly] = _build_multimesh(is_painterly)
+	var entry: Dictionary = _cache[is_painterly]
+	mmi.multimesh = entry.mm
+	puffs = entry.puffs
+	tris = entry.tris
+
+
+func _build_multimesh(is_painterly: bool) -> Dictionary:
+	var mesh := _octagon() if is_painterly else _icosphere(DETAIL)
 	mesh.surface_set_material(0, mat)
-	var list := _puffs_painterly(COUNT) if painterly else _puffs(COUNT)
+	var list := _puffs_painterly(COUNT) if is_painterly else _puffs(COUNT)
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_custom_data = true
@@ -63,12 +81,21 @@ func _ready() -> void:
 		buf[o + 15] = float(p[7])
 	mm.buffer = buf
 	mm.custom_aabb = AABB(Vector3(-20000, 0, -20000), Vector3(40000, 12000, 40000))
-	mmi = MultiMeshInstance3D.new()
-	mmi.multimesh = mm
-	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mmi)
-	puffs = list.size()
-	tris = puffs * (mesh.surface_get_array_index_len(0) / 3)
+	return {"mm": mm, "puffs": list.size(), "tris": list.size() * (mesh.surface_get_array_index_len(0) / 3)}
+
+
+func set_on(v: bool) -> void:
+	visible = v
+
+
+func is_on() -> bool:
+	return visible
+
+
+func set_painterly(p: bool) -> void:
+	if p == painterly:
+		return
+	_apply_style(p)
 
 
 func materials() -> Array[ShaderMaterial]:

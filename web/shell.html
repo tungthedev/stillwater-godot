@@ -39,6 +39,48 @@ html, body { margin: 0; padding: 0; border: 0; width: 100%; height: 100%; backgr
 			<div id="status-notice"></div>
 		</div>
 
+		<script>
+// Early rAF wrapper installed before Godot starts so ?bench=sweep can measure the true main-loop
+// callback duration and rAF interval with performance.now(). Idle cost when inactive is two checks.
+(function () {
+	if (window.__rafTimer) return;
+	const origRaf = window.requestAnimationFrame.bind(window);
+	const rec = window.__rafTimer = {
+		active: false,
+		prevStart: 0,
+		cpu: [],
+		iv: [],
+		start() {
+			this.cpu = [];
+			this.iv = [];
+			this.prevStart = 0;
+			this.active = true;
+		},
+		stop() {
+			this.active = false;
+			return JSON.stringify({ cpu: this.cpu, iv: this.iv });
+		},
+	};
+	window.requestAnimationFrame = function (cb) {
+		return origRaf(function (ts) {
+			const t0 = performance.now();
+			const armed = rec.active;
+			if (armed && rec.prevStart > 0) {
+				rec.iv.push(t0 - rec.prevStart);
+			}
+			try {
+				cb(ts);
+			} finally {
+				const t1 = performance.now();
+				if (armed && rec.active) {
+					rec.cpu.push(t1 - t0);
+					rec.prevStart = t0;
+				}
+			}
+		});
+	};
+}());
+		</script>
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;

@@ -104,6 +104,8 @@ var build_max_us := 0
 var _draw_info := {}
 
 var on := true
+var impostors_on := true
+var frozen := false
 var stats := {"hero": 0, "mid": 0, "impostor": 0, "near_cells": 0, "far_cells": 0}
 var last_tris := 0
 var last_draws := 0
@@ -434,6 +436,7 @@ func _build_far() -> void:
 		mmi.multimesh.custom_aabb = _cell_aabb(idx, (ix + 0.5) * FAR_CELL, (iz + 0.5) * FAR_CELL, FAR_CELL)
 		mmi.material_override = imp_mat
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visible = impostors_on
 		add_child(mmi)
 		far_nodes.append(mmi)
 		far_total += idx.size()
@@ -739,20 +742,31 @@ func set_on(v: bool) -> void:
 	visible = v
 
 
+func set_impostors_on(v: bool) -> void:
+	impostors_on = v
+	for mmi in far_nodes:
+		mmi.visible = v
+
+
 func is_on() -> bool:
 	return on
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	var cam := get_viewport().get_camera_3d()
-	if cam != null and count > 0:
-		update_lod(cam.global_position)
-		if on:
-			_drain_prefetch(t0)
-		var tc := Time.get_ticks_usec()
-		count_drawn(cam)
-		count_us = Time.get_ticks_usec() - tc
+	if not frozen:
+		var cam := get_viewport().get_camera_3d()
+		if cam != null and count > 0:
+			update_lod(cam.global_position)
+			if on:
+				_drain_prefetch(t0)
+			var tc := Time.get_ticks_usec()
+			count_drawn(cam)
+			count_us = Time.get_ticks_usec() - tc
 	prof_us = Time.get_ticks_usec() - t0
 
 

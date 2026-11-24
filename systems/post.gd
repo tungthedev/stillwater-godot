@@ -39,7 +39,9 @@ var comp_layer: CanvasLayer
 var screen := Vector2i(16, 16)
 var internal := Vector2i(16, 16)
 var scale := TIER_SCALE
+var scale_mult := 1.0
 var fx := true
+var frozen := false
 
 
 func setup(env_node: Node, float_targets: bool) -> void:
@@ -131,7 +133,7 @@ static func internal_size(w: int, h: int, s: float) -> Vector2i:
 func resize() -> void:
 	screen = DisplayServer.window_get_size()
 	var m: Dictionary = RES_MODES[res_i]
-	scale = cap_scale(screen.x, screen.y, float(m.scale), int(m.cap))
+	scale = cap_scale(screen.x, screen.y, float(m.scale), int(m.cap)) * scale_mult
 	internal = internal_size(screen.x, screen.y, scale)
 	scene_vp.size = internal
 	var bw := internal.x >> 1
@@ -171,6 +173,18 @@ func res_label() -> String:
 	return RES_MODES[res_i].label
 
 
+func set_scale_mult(mult: float) -> void:
+	if is_equal_approx(mult, scale_mult):
+		return
+	scale_mult = mult
+	resize()
+
+
+func set_painterly(p: bool) -> void:
+	if comp_mat != null:
+		comp_mat.set_shader_parameter("painterly", 1.0 if p else 0.0)
+
+
 func set_on(v: bool) -> void:
 	on = v and hdr
 	var mode := SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
@@ -206,9 +220,14 @@ func _sharpen() -> float:
 var prof_us := 0
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 

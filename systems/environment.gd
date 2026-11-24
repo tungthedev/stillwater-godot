@@ -62,9 +62,13 @@ var cloud_lit_col := CLOUD_LIT_COL
 var cloud_shadow_col := CLOUD_SHADOW_COL
 var cloud_rim_col := CLOUD_RIM_COL
 var sky_mat: ShaderMaterial
+var env: Environment
 # Every material that ends in w_grade, so the post switch reaches all of them.
 var mats: Array[ShaderMaterial] = []
 var post_on := false
+var sky_flat := false
+var cirrus_on := true
+var frozen := false
 
 
 func _init() -> void:
@@ -122,8 +126,9 @@ func _ready() -> void:
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.radiance_size = Sky.RADIANCE_SIZE_32
-	var env := Environment.new()
+	env = Environment.new()
 	env.background_mode = Environment.BG_SKY
+	env.background_color = Color(0.32, 0.56, 0.88)
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.5 * (HEMI_SKY.x + HEMI_GROUND.x), 0.5 * (HEMI_SKY.y + HEMI_GROUND.y), 0.5 * (HEMI_SKY.z + HEMI_GROUND.z))
@@ -181,6 +186,31 @@ func set_post(on: bool) -> void:
 		m.set_shader_parameter("post_on", 1.0 if on else 0.0)
 
 
+func set_sky_flat(on: bool) -> void:
+	sky_flat = on
+	if env != null:
+		env.background_mode = Environment.BG_COLOR if on else Environment.BG_SKY
+
+
+func set_cirrus_on(on: bool) -> void:
+	cirrus_on = on
+	if sky_mat != null:
+		sky_mat.set_shader_parameter("cirrus_on", 1.0 if on else 0.0)
+
+
+func set_style(s: String) -> void:
+	style = "classic" if s == "classic" else "painterly"
+	painterly = style != "classic"
+	hemi_sky = PAINTERLY_HEMI_SKY if painterly else HEMI_SKY
+	hemi_ground = PAINTERLY_HEMI_GROUND if painterly else HEMI_GROUND
+	var active_light := light_col * (PAINTERLY_DIRECT_SCALE if painterly else 1.0)
+	for m in mats:
+		m.set_shader_parameter("light_col", active_light)
+		m.set_shader_parameter("painterly", 1.0 if painterly else 0.0)
+		m.set_shader_parameter("hemi_sky", hemi_sky)
+		m.set_shader_parameter("hemi_ground", hemi_ground)
+
+
 # Sky LUT and noise; the cirrus values are the hour-16 ones (captures/slice2/stillwater_values.json),
 # set explicitly because sky-shader uniform defaults are not applied in this renderer.
 func set_sky(lut: Texture2D, noise: Texture2D) -> void:
@@ -188,6 +218,7 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 	sky_mat.set_shader_parameter("noise_tex", noise)
 	sky_mat.set_shader_parameter("cloud_offset", Vector2(-223.16, -143.45))
 	sky_mat.set_shader_parameter("wind_dir", Vector2(0.8253, 0.5646))
+	sky_mat.set_shader_parameter("cirrus_on", 1.0 if cirrus_on else 0.0)
 	apply_to(sky_mat)
 
 
@@ -195,9 +226,14 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 var prof_us := 0
 
 
+func set_frozen(v: bool) -> void:
+	frozen = v
+
+
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	_tick(delta)
+	if not frozen:
+		_tick(delta)
 	prof_us = Time.get_ticks_usec() - t0
 
 
