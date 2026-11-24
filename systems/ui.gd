@@ -34,7 +34,11 @@ var frozen := false
 var _scr_line := ""
 var _scr_ema := {}
 var _scr_tot_ema := 0.0
-var _scr_t := 0.0
+var _scr_t := 0.25
+var _prof_entries: Array = []
+var _prof_count := -1
+var _last_raw_prog := ""
+var _last_prog_kind := 0
 
 var dist_i := 0
 var dens_i := 0
@@ -172,10 +176,12 @@ func toggle_dev() -> void:
 func _show_dev() -> void:
 	var busy: bool = bool(bench_sys.running) or (sweep_sys != null and bool(sweep_sys.running))
 	var sweep_sheet: bool = _showing_sweep and panel.visible
-	label.visible = dev_on and not sweep_sheet
+	label.visible = dev_on and not panel.visible
 	grid.visible = dev_on and not busy and not sweep_sheet
 	if not dev_on:
 		panel.visible = false
+	elif label.visible:
+		_scr_t = 0.25
 
 
 func _start_bench() -> void:
@@ -480,7 +486,7 @@ func _close_panel() -> void:
 		for bk in ["panel_close", "panel_run_again"]:
 			if btn.has(bk):
 				(btn[bk] as Button).custom_minimum_size = Vector2(0, 40)
-		_show_dev()
+	_show_dev()
 
 
 static func _short_ua(ua: String) -> String:
@@ -529,37 +535,52 @@ static func _sub_str(sys: Dictionary, specs: Array) -> String:
 	return (" (%s)" % " ".join(out)) if not out.is_empty() else ""
 
 
-func _update_scr_line(delta: float) -> void:
-	_scr_t += delta
-	if _scr_t < 0.25 and _scr_line != "":
-		return
-	_scr_t = 0.0
-	var a := 0.35 if _scr_line != "" else 1.0
-	_scr_tot_ema = lerpf(_scr_tot_ema, float(bench_sys.last_script_us) / 1000.0, a)
+func _rebuild_prof_entries() -> void:
+	_prof_entries.clear()
+	_prof_count = bench_sys.profiled.size()
 	for k in bench_sys.profiled:
 		var node: Object = bench_sys.profiled[k]
 		if node == null:
 			continue
 		var ks := String(k)
-		_scr_ema[ks] = lerpf(float(_scr_ema.get(ks, 0.0)), float(node.prof_us) / 1000.0, a)
+		_prof_entries.append([ks, node, &"prof_us"])
 		for sub in bench_sys.SUB_PROFS:
-			var v = node.get(sub)
-			if v != null:
-				var sk := "%s.%s" % [ks, sub.trim_suffix("_us")]
-				_scr_ema[sk] = lerpf(float(_scr_ema.get(sk, 0.0)), float(v) / 1000.0, a)
-	_scr_line = _format_sys_line("scr", _scr_tot_ema, _scr_ema)
+			if node.get(sub) != null:
+				_prof_entries.append(["%s.%s" % [ks, sub.trim_suffix("_us")], node, StringName(sub)])
 
 
 func _tick(delta: float) -> void:
+	var pkind := 0
+	var raw_prog := ""
 	if sweep_sys != null and sweep_sys.running:
-		progress.text = "Sweep  " + sweep_sys.progress
+		pkind = 1
+		raw_prog = sweep_sys.progress
 	elif bench_sys.running:
-		progress.text = "Bench  " + bench_sys.progress
-	else:
-		progress.text = ""
-	if not dev_on:
+		pkind = 2
+		raw_prog = bench_sys.progress
+	if pkind != _last_prog_kind or raw_prog != _last_raw_prog:
+		_last_prog_kind = pkind
+		_last_raw_prog = raw_prog
+		progress.text = ("Sweep  " + raw_prog) if pkind == 1 else (("Bench  " + raw_prog) if pkind == 2 else "")
+	if not dev_on or not label.visible:
 		return
-	_update_scr_line(delta)
+	# Refresh the perf readout at 4 Hz interactively, or 1 Hz while a bench/sweep is running.
+	var period := 1.0 if pkind != 0 else 0.25
+	_scr_t += delta
+	if _scr_t < period and _scr_line != "":
+		return
+	_scr_t = 0.0
+	if bench_sys.profiled.size() != _prof_count:
+		_rebuild_prof_entries()
+	var a := 0.35 if _scr_line != "" else 1.0
+	_scr_tot_ema = lerpf(_scr_tot_ema, float(bench_sys.last_script_us) / 1000.0, a)
+	for e in _prof_entries:
+		var key: String = e[0]
+		_scr_ema[key] = lerpf(float(_scr_ema.get(key, 0.0)), float((e[1] as Object).get(e[2])) / 1000.0, a)
+	_scr_line = _format_sys_line("scr", _scr_tot_ema, _scr_ema)
+	bench_sys.refresh_counts()
+	if pkind == 0:
+		trees_sys.ensure_counts(cam)
 	label.text = "%d fps  %d x %d of %d x %d  post %s  style %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)\n%s" % [
 		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off", env_sys.style,
 		bench_sys.last_draws, bench_sys.last_prims / 1.0e6, terrain_sys.last_tris / 1.0e6, trees_sys.last_tris / 1.0e6, grass_sys.last_tris / 1.0e6, _scr_line]

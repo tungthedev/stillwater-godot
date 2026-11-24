@@ -46,6 +46,9 @@ var _hint_at := -1.0
 var _was_captured := false
 var _placed := false
 var _suspended := false
+var _last_fade := -1.0
+var _benches_n := -1
+var _poi_t := 0.25
 var prof_us := 0
 
 
@@ -167,10 +170,15 @@ func _tick(delta: float) -> void:
 		return
 	var dt := minf(delta, 0.05)
 	t += dt
-	fade += (fade_target - fade) * (1.0 - exp(-dt * (TITLE_FADE_IN if fade_target > fade else FADE_OUT)))
-	var tf := Time.get_ticks_usec()
-	hud.set_fade(fade)
-	hud.prof_us += Time.get_ticks_usec() - tf
+	if absf(fade - fade_target) > 0.0002:
+		fade += (fade_target - fade) * (1.0 - exp(-dt * (TITLE_FADE_IN if fade_target > fade else FADE_OUT)))
+	else:
+		fade = fade_target
+	if absf(fade - _last_fade) > 0.0005:
+		_last_fade = fade
+		var tf := Time.get_ticks_usec()
+		hud.set_fade(fade)
+		hud.prof_us += Time.get_ticks_usec() - tf
 	if mode == "title" or (mode == "transition" and not _placed):
 		_title_cam(t)
 	if mode == "transition" and fade_target == 0.0 and fade < 0.02 and not _placed:
@@ -189,17 +197,20 @@ func _tick(delta: float) -> void:
 	if _hint_at > 0.0 and t >= _hint_at:
 		_hint_at = -1.0
 		hud.toast("Left side walks · Right side looks" if input.touch else "Q follows the trail · E to sit and rest")
-	player.benches = _benches()
+	if interactables.size() != _benches_n:
+		_benches_n = interactables.size()
+		player.benches = _benches()
 	if mode == "play":
-		_check_pois()
+		_poi_t += dt
+		if _poi_t >= 0.25:
+			_poi_t = 0.0
+			_check_pois()
 	var p: Vector2 = player.pos
+	var alt: float = player.last_y if not is_nan(player.last_y) else world.height(cam.position.x, cam.position.z)
+	var is_sitting: bool = not player.sitting.is_empty()
+	var has_bench: bool = (not is_sitting) and (not player.benches.is_empty()) and (not player.nearest_bench().is_empty())
 	var th := Time.get_ticks_usec()
-	hud.update({
-		"yaw": player.yaw, "altitude": world.height(cam.position.x, cam.position.z), "hours": hours,
-		"distance": player.distance, "climb": player.climb, "pois": pois, "pos": p,
-		"bench": player.sitting.is_empty() and not player.nearest_bench().is_empty(),
-		"sitting": not player.sitting.is_empty(), "auto_walk": player.auto_walk,
-	})
+	hud.update_state(dt, player.yaw, alt, hours, player.distance, player.climb, pois, p, has_bench, is_sitting, player.auto_walk)
 	hud.prof_us += Time.get_ticks_usec() - th
 
 
@@ -226,10 +237,15 @@ func _benches() -> Array[Dictionary]:
 
 
 func _check_pois() -> void:
+	var px: float = player.pos.x
+	var pz: float = player.pos.y
 	for p in pois:
 		if visited.has(p.name):
 			continue
-		if Vector2(p.x - player.pos.x, p.z - player.pos.y).length() < float(p.r):
+		var dx: float = float(p.x) - px
+		var dz: float = float(p.z) - pz
+		var r := float(p.r)
+		if dx * dx + dz * dz < r * r:
 			visited[p.name] = true
 			hud.place(p.name, p.sub)
 

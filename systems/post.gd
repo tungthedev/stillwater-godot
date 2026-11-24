@@ -218,6 +218,17 @@ func _sharpen() -> float:
 
 # Script time of this frame's _process, for the bench.
 var prof_us := 0
+var _cam: Camera3D
+var _sun_valid := false
+var _last_bz := Vector3.ZERO
+var _last_bx := Vector3.ZERO
+var _last_sun_dir := Vector3.ZERO
+var _last_sun_col := Vector3(-1.0, -1.0, -1.0)
+var _last_internal := Vector2i.ZERO
+var _last_fov := -1.0
+var _last_fx := false
+var _last_vis := -1.0
+var _last_uv := Vector2(-99.0, -99.0)
 
 
 func set_frozen(v: bool) -> void:
@@ -235,22 +246,41 @@ func _tick(_delta: float) -> void:
 	if not on:
 		return
 	# buildWorld.js getPostParams: the veil shows when the sun is on screen and roughly ahead.
-	var cam := scene_vp.get_camera_3d()
-	if cam == null:
-		return
+	if _cam == null or not is_instance_valid(_cam):
+		_cam = scene_vp.get_camera_3d()
+		if _cam == null:
+			return
 	var sun_dir: Vector3 = env_sys.sun_dir
-	var facing := (-cam.global_basis.z).dot(sun_dir)
-	var p := cam.global_position + sun_dir * 10000.0
+	var sun_col: Vector3 = env_sys.sun_col
+	var b := _cam.global_basis
+	if _sun_valid and b.z == _last_bz and b.x == _last_bx and sun_dir == _last_sun_dir and sun_col == _last_sun_col and internal == _last_internal and _cam.fov == _last_fov and fx == _last_fx:
+		return
+	_sun_valid = true
+	_last_bz = b.z
+	_last_bx = b.x
+	_last_sun_dir = sun_dir
+	_last_internal = internal
+	_last_fov = _cam.fov
+	_last_fx = fx
+	if sun_col != _last_sun_col:
+		_last_sun_col = sun_col
+		comp_mat.set_shader_parameter("ray_color", sun_col)
+	var facing := (-b.z).dot(sun_dir)
 	var vis := 0.0
 	var uv := Vector2(-10.0, -10.0)
-	if facing > 0.0 and not cam.is_position_behind(p):
-		uv = cam.unproject_position(p) / Vector2(internal)
-		var ndc := uv * 2.0 - Vector2.ONE
-		if fx and absf(ndc.x) < 1.3 and absf(ndc.y) < 1.3:
-			vis = _ss(-0.03, 0.04, sun_dir.y) * _ss(0.3, 0.8, facing)
-	comp_mat.set_shader_parameter("ray_color", env_sys.sun_col)
-	comp_mat.set_shader_parameter("sun_uv", uv)
-	comp_mat.set_shader_parameter("sun_vis", vis)
+	if fx and facing > 0.0:
+		var p := _cam.global_position + sun_dir * 10000.0
+		if not _cam.is_position_behind(p):
+			uv = _cam.unproject_position(p) / Vector2(internal)
+			var ndc := uv * 2.0 - Vector2.ONE
+			if absf(ndc.x) < 1.3 and absf(ndc.y) < 1.3:
+				vis = _ss(-0.03, 0.04, sun_dir.y) * _ss(0.3, 0.8, facing)
+	if vis != _last_vis:
+		_last_vis = vis
+		comp_mat.set_shader_parameter("sun_vis", vis)
+	if vis > 0.001 and uv != _last_uv:
+		_last_uv = uv
+		comp_mat.set_shader_parameter("sun_uv", uv)
 
 
 static func _ss(a: float, b: float, x: float) -> float:

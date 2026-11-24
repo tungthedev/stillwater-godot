@@ -20,6 +20,7 @@ var mode_i := 0
 var t := 0.0
 var walk_pts := PackedVector2Array()
 var walk_dist := PackedFloat32Array()
+var _walk_i := 1
 
 
 func setup(w: RefCounted) -> void:
@@ -82,6 +83,7 @@ func set_mode(i: int) -> void:
 		var pitch_over := _pitch_override()
 		rotation = Vector3(float(s.pitch) if pitch_over.is_empty() else float(pitch_over), float(s.yaw), 0.0)
 	else:
+		_walk_i = 1
 		_walk_to(0.0)
 	mode_changed.emit(mode())
 
@@ -115,8 +117,14 @@ func _walk_to(s: float) -> void:
 
 
 func _at(s: float) -> Vector2:
-	var i := walk_dist.bsearch(s)
-	i = clampi(i, 1, walk_pts.size() - 1)
+	var n := walk_pts.size()
+	var i := _walk_i
+	if i >= n or walk_dist[i - 1] > s:
+		i = clampi(walk_dist.bsearch(s), 1, n - 1)
+	else:
+		while i < n - 1 and walk_dist[i] < s:
+			i += 1
+	_walk_i = i
 	var span := walk_dist[i] - walk_dist[i - 1]
 	var f := clampf((s - walk_dist[i - 1]) / maxf(span, 1e-3), 0.0, 1.0)
 	return walk_pts[i - 1].lerp(walk_pts[i], f)

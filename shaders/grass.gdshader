@@ -20,8 +20,6 @@ render_mode unshaded, fog_disabled, cull_disabled, depth_draw_opaque;
 #include "res://shaders/atmosphere.gdshaderinc"
 
 uniform sampler2D atlas : filter_nearest;
-uniform vec2 cam_xz;
-uniform vec2 player_xz = vec2(100000.0);
 uniform float tile_size = 8.0;
 uniform int slot_w = 64;
 uniform float far_count = 1024.0;
@@ -53,6 +51,7 @@ void vertex() {
 	if ((flips & 1) != 0) local.x = tile_size - local.x;
 	if ((flips & 2) != 0) local.y = tile_size - local.y;
 	vec2 xz = MODEL_MATRIX[3].xz + local;
+	vec2 cam_xz = CAMERA_POSITION_WORLD.xz;
 	float dist = length(xz - cam_xz);
 	vec4 rnd = CUSTOM1;
 
@@ -103,7 +102,8 @@ void vertex() {
 		float flutter = sin(TIME * (2.0 + rnd.y * 1.6) + rnd.x * 6.28 + dot(xz, wind_dir) * 0.55) * 0.16;
 		float bend = (0.10 + rnd.y * 0.34) + (wave * 0.82 + flutter) * (0.28 + wind_strength * 0.82);
 
-		vec2 to_p = xz - player_xz;
+		// The walker stands under the camera, so blades part around CAMERA_POSITION_WORLD.xz.
+		vec2 to_p = xz - cam_xz;
 		float pd = length(to_p);
 		float push = 1.0 - smoothstep(0.2, 1.1, pd);
 		vec2 bend_dir = fwd * 0.48 + wind_dir * (0.25 + wave * 1.45) + (to_p / max(pd, 0.01)) * push * 3.0;

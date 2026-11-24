@@ -390,7 +390,7 @@ func _step(script_us: int) -> void:
 		_tris_sum += RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 		_draws_n += 1
 	var n := _frames.size()
-	if not _frozen_step:
+	if not _frozen_step and (n == 1 or n % 15 == 0):
 		progress = "%s %d/%d  %s  %.1f/%.1fs (%df)" % [_poses[_pose_i], _step_i + 1, _schedule.size(), step.label, el, WINDOW_S, n]
 	if not ((el >= WINDOW_S and n >= WINDOW_MIN_FRAMES) or el >= WINDOW_MAX_S):
 		return

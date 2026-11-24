@@ -37,6 +37,8 @@ var keys_flow: HFlowContainer
 var hud: Control
 var compass: Control
 var marks: Array[Dictionary] = []
+var _mark_nodes: Array[Control] = []
+var _mark_bearings := PackedFloat32Array()
 var poi_marks := {}
 var stats: VBoxContainer
 var st_alt: Label
@@ -69,11 +71,25 @@ var _prompt_text := ""
 var _breathe := 0.0
 var _hud_on := true
 var _hud_live := false
-var _btn_key := []
+var _btn_mask := -1
 var blockers: Array = []
 var _touch_btns := {}
 var _touch_fire_ms := {}
 var _stick_shown := false
+var _last_heading := NAN
+var _last_poi_pos := Vector2(1e9, 1e9)
+var _poi_nodes: Array[Control] = []
+var _poi_x := PackedFloat32Array()
+var _poi_z := PackedFloat32Array()
+var _poi_r := PackedFloat32Array()
+var _poi_bearing := PackedFloat32Array()
+var _poi_alpha := PackedFloat32Array()
+var _compass_dirty := true
+var _stats_t := 0.25
+var _last_alt_i := -999999
+var _last_clock_m := -1
+var _last_dist_10m := -1
+var _last_climb_i := -1
 var prof_us := 0
 
 
@@ -361,7 +377,10 @@ func _build_hud() -> void:
 			r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			c = r
 		compass.add_child(c)
-		marks.append({"node": c, "bearing": deg_to_rad(d)})
+		var b := deg_to_rad(d)
+		marks.append({"node": c, "bearing": b})
+		_mark_nodes.append(c)
+		_mark_bearings.append(b)
 	var centre := ColorRect.new()
 	centre.color = INK
 	centre.size = Vector2(1, 4)
@@ -692,6 +711,7 @@ func _layout() -> void:
 	compass.size = Vector2(cw, 28)
 	compass.position = Vector2((vs.x - cw) * 0.5, maxf(22, 12 + safe.x))
 	compass.get_node("centre").position = Vector2(cw * 0.5, 0)
+	_compass_dirty = true
 	# Stats
 	var st_size := 10.0 if phone else 11.0
 	var st_sp := 0.1 if phone else 0.14
@@ -837,53 +857,119 @@ func clock(h: float) -> String:
 
 # s: yaw, altitude, hours, distance, climb, pois, pos (Vector2), bench, sitting, auto_walk
 func update(s: Dictionary) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
-	if _toast_until > 0.0 and now > _toast_until:
-		_toast_until = -1.0
-		_fade(toast_l, 0.0, 1.0)
-	if _place_until > 0.0 and now > _place_until:
-		_place_until = -1.0
-		_fade(place_box, 0.0, 2.4)
+	update_state(get_process_delta_time(), float(s.yaw), float(s.altitude), float(s.hours), float(s.distance), float(s.climb), s.pois, s.pos, bool(s.bench), bool(s.sitting), bool(s.auto_walk))
+
+
+func update_state(dt: float, yaw: float, altitude: float, hours: float, distance: float, climb: float, pois: Array, pos: Vector2, has_bench: bool, is_sitting: bool, auto_walk: bool) -> void:
+	if _toast_until > 0.0 or _place_until > 0.0:
+		var now := Time.get_ticks_msec() / 1000.0
+		if _toast_until > 0.0 and now > _toast_until:
+			_toast_until = -1.0
+			_fade(toast_l, 0.0, 1.0)
+		if _place_until > 0.0 and now > _place_until:
+			_place_until = -1.0
+			_fade(place_box, 0.0, 2.4)
 	if title.modulate.a > 0.0:
-		_breathe += get_process_delta_time()
+		_breathe += dt
 		begin.modulate.a = lerpf(0.82, 1.0, 0.5 - 0.5 * cos(_breathe / 3.6 * TAU))
 	if not _hud_live:
 		return
-	var heading: float = -s.yaw
+	var heading := -yaw
 	var w := compass.size.x
-	for m in marks:
-		_place_mark(m.node, m.bearing, heading, w, 1.0)
-	for p in s.pois:
-		var node: Control = poi_marks.get(p.name)
-		if node == null:
-			node = ColorRect.new()
-			(node as ColorRect).color = POI_COL
-			node.size = Vector2(5, 5)
-			node.pivot_offset = Vector2(2.5, 2.5)
-			node.rotation = PI / 4.0
-			node.position.y = 19
-			node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			compass.add_child(node)
-			poi_marks[p.name] = node
-		var dx: float = p.x - s.pos.x
-		var dz: float = p.z - s.pos.y
-		var d := sqrt(dx * dx + dz * dz)
-		var a := 0.0 if d < p.r else minf(1.0, 0.35 + 400.0 / (d + 200.0))
-		_place_mark(node, atan2(dx, -dz), heading, w, a)
-	_set_text(st_alt, "%d M" % roundi(s.altitude))
-	_set_text(st_clock, "  ·  " + clock(s.hours))
-	_set_text(st_walk, "%.2f KM WALKED  ·  %d M CLIMBED" % [s.distance / 1000.0, roundi(s.climb)])
+	var need_poi := _poi_nodes.size() != pois.size() or pos.distance_squared_to(_last_poi_pos) > 4.0
+	if need_poi:
+		_last_poi_pos = pos
+		var pn := pois.size()
+		if _poi_nodes.size() != pn:
+			_poi_nodes.clear()
+			_poi_x.resize(pn)
+			_poi_z.resize(pn)
+			_poi_r.resize(pn)
+			_poi_bearing.resize(pn)
+			_poi_alpha.resize(pn)
+			for i in pn:
+				var p: Dictionary = pois[i]
+				var node: Control = poi_marks.get(p.name)
+				if node == null:
+					node = ColorRect.new()
+					(node as ColorRect).color = POI_COL
+					node.size = Vector2(5, 5)
+					node.pivot_offset = Vector2(2.5, 2.5)
+					node.rotation = PI / 4.0
+					node.position.y = 19
+					node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					compass.add_child(node)
+					poi_marks[p.name] = node
+				_poi_nodes.append(node)
+				_poi_x[i] = float(p.x)
+				_poi_z[i] = float(p.z)
+				_poi_r[i] = float(p.r)
+		for i in pn:
+			var dx := _poi_x[i] - pos.x
+			var dz := _poi_z[i] - pos.y
+			var d := sqrt(dx * dx + dz * dz)
+			_poi_bearing[i] = atan2(dx, -dz)
+			_poi_alpha[i] = 0.0 if d < _poi_r[i] else minf(1.0, 0.35 + 400.0 / (d + 200.0))
+	if _compass_dirty or need_poi or is_nan(_last_heading) or absf(heading - _last_heading) > 0.004:
+		_compass_dirty = false
+		_last_heading = heading
+		var half_span := SPAN * 0.5
+		var half_w := w * 0.5
+		var inv_span_w := w / SPAN
+		var inv_edge := 4.0 / maxf(w, 1.0)
+		for i in _mark_nodes.size():
+			var c := _mark_nodes[i]
+			var rel := wrapf(_mark_bearings[i] - heading, -PI, PI)
+			if absf(rel) > half_span:
+				if c.visible:
+					c.visible = false
+				continue
+			if not c.visible:
+				c.visible = true
+			var x := half_w + rel * inv_span_w
+			c.position.x = x - c.size.x * 0.5
+			c.modulate.a = clampf(minf(x, w - x) * inv_edge, 0.0, 1.0)
+		for i in _poi_nodes.size():
+			var c := _poi_nodes[i]
+			var rel := wrapf(_poi_bearing[i] - heading, -PI, PI)
+			if absf(rel) > half_span:
+				if c.visible:
+					c.visible = false
+				continue
+			if not c.visible:
+				c.visible = true
+			var x := half_w + rel * inv_span_w
+			c.position.x = x - c.size.x * 0.5
+			c.modulate.a = clampf(minf(x, w - x) * inv_edge, 0.0, 1.0) * _poi_alpha[i]
+	# Stats labels update at 4 Hz and only format strings when a displayed integer changes.
+	_stats_t += dt
+	if _stats_t >= 0.25:
+		_stats_t = 0.0
+		var alt_i := roundi(altitude)
+		if alt_i != _last_alt_i:
+			_last_alt_i = alt_i
+			st_alt.text = "%d M" % alt_i
+		var clk_m := floori(hours * 60.0)
+		if clk_m != _last_clock_m:
+			_last_clock_m = clk_m
+			st_clock.text = "  ·  " + clock(hours)
+		var dist_10m := roundi(distance * 0.1)
+		var climb_i := roundi(climb)
+		if dist_10m != _last_dist_10m or climb_i != _last_climb_i:
+			_last_dist_10m = dist_10m
+			_last_climb_i = climb_i
+			st_walk.text = "%.2f KM WALKED  ·  %d M CLIMBED" % [distance / 1000.0, climb_i]
 	if touch:
-		var key := [s.sitting, not s.sitting and s.bench, s.auto_walk]
-		if key != _btn_key:
-			_btn_key = key
-			_tbtn_state(btn.sit, s.sitting, not s.sitting and s.bench)
-			btn.sit.text = "STAND" if s.sitting else "SIT"
-			_tbtn_state(btn.autoWalk, s.auto_walk, false)
+		var bmask := (1 if is_sitting else 0) | (2 if (not is_sitting and has_bench) else 0) | (4 if auto_walk else 0)
+		if bmask != _btn_mask:
+			_btn_mask = bmask
+			_tbtn_state(btn.sit, is_sitting, not is_sitting and has_bench)
+			btn.sit.text = "STAND" if is_sitting else "SIT"
+			_tbtn_state(btn.autoWalk, auto_walk, false)
 			_place_actions.call_deferred()
-		set_prompt("Tap Stand" if s.sitting else ("Tap Sit to rest" if s.bench else ""))
+		set_prompt("Tap Stand" if is_sitting else ("Tap Sit to rest" if has_bench else ""))
 	else:
-		set_prompt("E · stand up" if s.sitting else ("E · sit and rest" if s.bench else ""))
+		set_prompt("E · stand up" if is_sitting else ("E · sit and rest" if has_bench else ""))
 
 
 static func _set_text(l: Label, t: String) -> void:
@@ -893,12 +979,13 @@ static func _set_text(l: Label, t: String) -> void:
 
 # The compass strip is masked to transparent over its outer quarters, like the CSS mask-image.
 func _place_mark(c: Control, bearing: float, heading: float, w: float, alpha: float) -> void:
-	var rel := bearing - heading
-	rel = atan2(sin(rel), cos(rel))
+	var rel := wrapf(bearing - heading, -PI, PI)
 	if absf(rel) > SPAN * 0.5:
-		c.visible = false
+		if c.visible:
+			c.visible = false
 		return
-	c.visible = true
+	if not c.visible:
+		c.visible = true
 	var x := w * 0.5 + rel / SPAN * w
 	c.position.x = x - c.size.x * 0.5
 	var edge := minf(x, w - x) / (w * 0.25)

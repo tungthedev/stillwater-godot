@@ -43,6 +43,11 @@ const ENTER_BUDGET_US := 900
 const NEW_TILES_PER_FRAME := 4
 # Height in the atlas is 16 bits over 64 m above this much under the tile's lowest sample.
 const BASE_DROP := 4.0
+# Live walk/turn skip thresholds and strictly wider frustum padding so edge blades never pop.
+const MOVE_THRESH_SQ := 0.5 * 0.5
+const ROT_COS := 0.9998  # cos(0.020 rad)
+const PAD_M := 0.55
+const PAD_ANG := 0.021
 
 var world: RefCounted
 var grass: Ring
@@ -65,6 +70,18 @@ var flowers_us := 0
 var uniform_us := 0
 # This frame's work, for walk checks: tiles that entered, ring selection and entry time.
 var detail := {}
+var _pl := PackedFloat64Array()
+var _cam_valid := false
+var _prev_xform := Transform3D.IDENTITY
+var _still_frames := 2
+var _last_xform := Transform3D.IDENTITY
+var _last_pos := Vector3.ZERO
+var _last_fwd := Vector3.FORWARD
+var _last_up := Vector3.UP
+var _last_fov := -1.0
+var _last_far := -1.0
+var _last_vp := Vector2.ZERO
+var _last_pad := false
 
 
 func setup(w: RefCounted) -> void:
@@ -104,6 +121,7 @@ func set_density(f: float) -> void:
 	grass.draw_mat.set_shader_parameter("far_count", float(n_far))
 	var fm := _flower_mesh(maxi(1, roundi(FLOWERS.near * f)))
 	flowers.set_meshes(fm, fm, maxi(1, roundi(FLOWERS.near * f)), maxi(1, roundi(FLOWERS.far * f)))
+	_cam_valid = false
 
 
 func is_on() -> bool:
@@ -113,6 +131,7 @@ func is_on() -> bool:
 func set_on(on: bool) -> void:
 	_on = on
 	_sync_ring_vis()
+	_cam_valid = false
 	if not on:
 		last_tris = 0
 		last_draws = 0
@@ -121,6 +140,7 @@ func set_on(on: bool) -> void:
 func set_grass_on(on: bool) -> void:
 	_grass_on = on
 	_sync_ring_vis()
+	_cam_valid = false
 	if not on:
 		grass.last_tris = 0
 		grass.last_draws = 0
@@ -131,6 +151,7 @@ func set_grass_on(on: bool) -> void:
 func set_flowers_on(on: bool) -> void:
 	_flowers_on = on
 	_sync_ring_vis()
+	_cam_valid = false
 	if not on:
 		flowers.last_tris = 0
 		flowers.last_draws = 0
@@ -160,24 +181,69 @@ func _process(_delta: float) -> void:
 	uniform_us = 0
 	if _on and not frozen and cam != null:
 		_frame += 1
-		update_rings(cam, false)
+		update_rings(cam, false, true)
 	prof_us = Time.get_ticks_usec() - t0
 
 
 # assume_baked: count tiles as drawable without waiting for a bake (headless budget test).
-func update_rings(cam: Camera3D, assume_baked: bool) -> void:
-	var planes := cam.get_frustum()
-	var p := cam.global_position
-	var cxz := Vector2(p.x, p.z)
-	var tu := Time.get_ticks_usec()
-	# The walker stands under the camera, so blades part around the camera's feet as in the game.
-	grass.draw_mat.set_shader_parameter("cam_xz", cxz)
-	grass.draw_mat.set_shader_parameter("player_xz", cxz)
-	flowers.draw_mat.set_shader_parameter("cam_xz", cxz)
-	uniform_us = Time.get_ticks_usec() - tu
+func update_rings(cam: Camera3D, assume_baked: bool, allow_pad: bool = false) -> void:
+	var xform := cam.global_transform
+	var pos := xform.origin
+	var fwd := -xform.basis.z
+	var up := xform.basis.y
+	var vp_sz := cam.get_viewport().get_visible_rect().size
+	if assume_baked or not _cam_valid:
+		_still_frames = 2
+	elif xform == _prev_xform:
+		_still_frames = mini(_still_frames + 1, 2)
+	else:
+		_still_frames = 0
+	_prev_xform = xform
+	var pad := allow_pad and not assume_baked and _still_frames < 2
+	var cam_same := false
+	if not assume_baked and _cam_valid and _last_pad == pad and cam.fov == _last_fov and cam.far == _last_far and vp_sz == _last_vp:
+		if pad:
+			cam_same = pos.distance_squared_to(_last_pos) < MOVE_THRESH_SQ and fwd.dot(_last_fwd) >= ROT_COS and up.dot(_last_up) >= ROT_COS
+		else:
+			cam_same = xform == _last_xform
+	if cam_same:
+		var g_busy := _grass_on and update_grass and grass.needs_work()
+		var f_busy := _flowers_on and update_flowers and flowers.needs_work()
+		if not g_busy and not f_busy:
+			return
+	if not cam_same:
+		_cam_valid = not assume_baked
+		_last_pad = pad
+		_last_xform = xform
+		_last_pos = pos
+		_last_fwd = fwd
+		_last_up = up
+		_last_fov = cam.fov
+		_last_far = cam.far
+		_last_vp = vp_sz
+		var planes := cam.get_frustum()
+		var pn := planes.size()
+		if _pl.size() != pn * 4:
+			_pl.resize(pn * 4)
+		for i in pn:
+			var pl := planes[i]
+			var n := pl.normal
+			var d := pl.d
+			if pad:
+				if absf(n.dot(fwd)) < 0.85:
+					n = (n - fwd * PAD_ANG).normalized()
+					d = n.dot(pos) + PAD_M
+				else:
+					d += PAD_M
+			var j := i * 4
+			_pl[j] = n.x
+			_pl[j + 1] = n.y
+			_pl[j + 2] = n.z
+			_pl[j + 3] = d
+	var p := pos
 	if _grass_on and update_grass:
 		var tg := Time.get_ticks_usec()
-		grass.update(p, planes, _frame, assume_baked)
+		grass.update(p, _pl, _frame, assume_baked)
 		grass_us = Time.get_ticks_usec() - tg
 	elif not _grass_on:
 		grass.last_tris = 0
@@ -186,7 +252,7 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 		grass_us = 0
 	if _flowers_on and update_flowers:
 		var tf := Time.get_ticks_usec()
-		flowers.update(p, planes, _frame, assume_baked)
+		flowers.update(p, _pl, _frame, assume_baked)
 		flowers_us = Time.get_ticks_usec() - tf
 	elif not _flowers_on:
 		flowers.last_tris = 0
@@ -196,7 +262,10 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
 	push_us = grass.push_us + flowers.push_us
-	detail = {"grass_new": grass.added, "flower_new": flowers.added, "ring_us": grass.ring_us + flowers.ring_us, "enter_us": grass.enter_us + flowers.enter_us}
+	detail["grass_new"] = grass.added
+	detail["flower_new"] = flowers.added
+	detail["ring_us"] = grass.ring_us + flowers.ring_us
+	detail["enter_us"] = grass.enter_us + flowers.enter_us
 
 
 # Stillwater's bladeGeometry(segs) for every rank below `count`, merged into one tile mesh.
@@ -308,6 +377,26 @@ class Ring:
 	var ring_us := 0
 	var enter_us := 0
 	var baking_n := 0
+	var _has_far := false
+	var _near_lod2 := INF
+	var _ring_valid := false
+	var _ring_cx := 1e9
+	var _ring_cz := 1e9
+	var _ring_n := 0
+	var _r_tx := PackedInt32Array()
+	var _r_tz := PackedInt32Array()
+	var _r_d2 := PackedFloat32Array()
+	var _r_slot: Array = []
+	var _m_idx := PackedInt32Array()
+	var _m_c2 := PackedFloat32Array()
+	var _m_n := 0
+	var _has_missing := false
+	var _active := {}
+	var _gen_seq := 0
+	var _buf_near_gen := PackedInt32Array()
+	var _buf_far_gen := PackedInt32Array()
+	var _pushed_near_n := -1
+	var _pushed_far_n := -1
 
 	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
 		cfg = c
@@ -316,7 +405,20 @@ class Ring:
 		world = owner.world
 		tile = cfg.tile
 		radius = cfg.radius
+		_has_far = float(cfg.near_lod) < 1.0e8
+		_near_lod2 = float(cfg.near_lod) * float(cfg.near_lod) if _has_far else INF
 		_atlas_grid(1.3)
+		var max_ring := (int(ceil(radius * 2.0 / tile)) + 3) * (int(ceil(radius * 2.0 / tile)) + 3)
+		_r_tx.resize(max_ring)
+		_r_tz.resize(max_ring)
+		_r_d2.resize(max_ring)
+		_r_slot.resize(max_ring)
+		_m_idx.resize(max_ring)
+		_m_c2.resize(max_ring)
+		_buf_near_gen.resize(capacity)
+		_buf_near_gen.fill(-1)
+		_buf_far_gen.resize(capacity)
+		_buf_far_gen.fill(-1)
 		slot_h = int(ceil(float(cfg.near) / cfg.slot_w))
 		var sc: Dictionary = VegScatter.generate(cfg.max_count, tile, cfg.seed)
 		# Pack scatter and slot tables into RGBA8 bytes rather than RGBAF: WebGL2 without
@@ -342,7 +444,7 @@ class Ring:
 		for s in capacity:
 			slots.append({"i": s, "key": null, "sx": (s % cols) * int(cfg.slot_w) * int(cfg.fields), "sy": (s / cols) * slot_h,
 				"tx": 0, "tz": 0, "ox": 0.0, "oz": 0.0, "flips": 0, "base": 0.0, "base_q": 0, "box": AABB(), "empty": false,
-				"baking": false, "bake_frame": 0, "ready": false})
+				"baking": false, "bake_frame": 0, "ready": false, "gen": 0})
 
 		vp = SubViewport.new()
 		vp.size = Vector2i(cols * int(cfg.slot_w) * int(cfg.fields), rows * slot_h)
@@ -409,46 +511,84 @@ class Ring:
 		rows = int(ceil(float(needed) / cols))
 		capacity = cols * rows
 
-	func update(cam: Vector3, planes: Array[Plane], frame: int, assume_baked: bool) -> void:
+	func needs_work() -> bool:
+		return baking_n > 0 or _has_missing or not _ring_valid
+
+	func update(cam: Vector3, pl: PackedFloat64Array, frame: int, assume_baked: bool) -> void:
 		# Slots baked during the previous frame's draw are now readable.
 		if baking_n > 0:
 			for s in slots:
 				if s.baking and frame > s.bake_frame:
 					s.baking = false
 					s.ready = true
+					_gen_seq += 1
+					s.gen = _gen_seq
 					baking_n -= 1
 					_write_slot(s)
+		var cx := cam.x
+		var cz := cam.z
 		var tr := Time.get_ticks_usec()
-		var tiles := _ring(cam.x, cam.z)
+		var dcx := cx - _ring_cx
+		var dcz := cz - _ring_cz
+		var rebuild_ring := assume_baked or not _ring_valid or (dcx * dcx + dcz * dcz) >= 0.0625
+		if rebuild_ring:
+			_rebuild_ring(cx, cz)
 		ring_us = Time.get_ticks_usec() - tr
-		var active := {}
-		for t in tiles:
-			active[t.key] = true
+
 		var bake_any := false
 		added = 0
 		var te := Time.get_ticks_usec()
-		for t in tiles:
-			if by_key.has(t.key):
-				continue
-			# Tiles enter nearest first and at most NEW_TILES_PER_FRAME a frame, so a walk across a
-			# tile row (or a teleport) spreads its ground sampling and bakes over a few frames; the
-			# ones left wait at the ring's edge, where blades are thinnest. Headless counts fill at once.
-			if not assume_baked and (added >= NEW_TILES_PER_FRAME or (added > 0 and Time.get_ticks_usec() - te > ENTER_BUDGET_US)):
-				break
-			added += 1
-			var s := _evict(active, cam.x, cam.z)
-			if s.key != null:
-				by_key.erase(s.key)
-			_assign(s, t)
-			by_key[t.key] = s
-			if not s.empty:
-				s.ready = assume_baked
-				s.baking = not assume_baked
-				s.bake_frame = frame
-				if s.baking:
-					baking_n += 1
-				bake_any = bake_any or s.baking
-			_write_slot(s)
+		if _has_missing:
+			# Build missing list (sorted nearest first) only when tiles need entering.
+			_m_n = 0
+			for i in _ring_n:
+				if _r_slot[i] == null:
+					var tx := _r_tx[i]
+					var tz := _r_tz[i]
+					var ex := tx * tile + tile * 0.5 - cx
+					var ez := tz * tile + tile * 0.5 - cz
+					var c2 := ex * ex + ez * ez
+					# Insertion sort keeps nearest first with zero closure allocation.
+					var j := _m_n
+					while j > 0 and _m_c2[j - 1] > c2:
+						_m_c2[j] = _m_c2[j - 1]
+						_m_idx[j] = _m_idx[j - 1]
+						j -= 1
+					_m_c2[j] = c2
+					_m_idx[j] = i
+					_m_n += 1
+			if _m_n > 0:
+				_active.clear()
+				for i in _ring_n:
+					_active[Vector2i(_r_tx[i], _r_tz[i])] = true
+				for mi in _m_n:
+					# Tiles enter nearest first and at most NEW_TILES_PER_FRAME a frame, so a walk across a
+					# tile row (or a teleport) spreads its ground sampling and bakes over a few frames; the
+					# ones left wait at the ring's edge, where blades are thinnest. Headless counts fill at once.
+					if not assume_baked and (added >= NEW_TILES_PER_FRAME or (added > 0 and Time.get_ticks_usec() - te > ENTER_BUDGET_US)):
+						break
+					var ri := _m_idx[mi]
+					var tx := _r_tx[ri]
+					var tz := _r_tz[ri]
+					var key := Vector2i(tx, tz)
+					added += 1
+					var s := _evict(_active, cx, cz)
+					if s.key != null:
+						by_key.erase(s.key)
+					_assign(s, key, tx, tz)
+					by_key[key] = s
+					_r_slot[ri] = s
+					if not s.empty:
+						s.ready = assume_baked
+						s.baking = not assume_baked
+						s.bake_frame = frame
+						if s.baking:
+							baking_n += 1
+						bake_any = bake_any or s.baking
+					_write_slot(s)
+				_has_missing = _m_n > added
+			else:
+				_has_missing = false
 		enter_us = Time.get_ticks_usec() - te
 		if bake_any:
 			vp.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -458,28 +598,93 @@ class Ring:
 			slot_tex.update(slot_img)
 			slot_dirty_tex = false
 		var slot_us := Time.get_ticks_usec() - tu
+
 		near_vis = 0
 		far_vis = 0
-		for t in tiles:
-			if not by_key.has(t.key):
+		var near_dirty := false
+		var far_dirty := false
+		var pl_len := pl.size()
+		for i in _ring_n:
+			var s = _r_slot[i]
+			if s == null or s.empty or not s.ready:
 				continue
-			var s: Dictionary = by_key[t.key]
-			if s.empty or not s.ready or not _box_visible(s.box, planes):
+			var b: AABB = s.box
+			var vis := true
+			var pi := 0
+			while pi < pl_len:
+				var nx := pl[pi]
+				var ny := pl[pi + 1]
+				var nz := pl[pi + 2]
+				var bx := b.position.x if nx > 0.0 else b.end.x
+				var by := b.position.y if ny > 0.0 else b.end.y
+				var bz := b.position.z if nz > 0.0 else b.end.z
+				if nx * bx + ny * by + nz * bz - pl[pi + 3] > 0.0:
+					vis = false
+					break
+				pi += 4
+			if not vis:
 				continue
-			var near: bool = t.d2 < cfg.near_lod * cfg.near_lod
-			if near:
-				_put(true, near_vis, s)
+			var gen: int = s.gen
+			if not _has_far or _r_d2[i] < _near_lod2:
+				if _buf_near_gen[near_vis] != gen:
+					_put(true, near_vis, s)
+					_buf_near_gen[near_vis] = gen
+					near_dirty = true
 				near_vis += 1
 			else:
-				_put(false, far_vis, s)
+				if _buf_far_gen[far_vis] != gen:
+					_put(false, far_vis, s)
+					_buf_far_gen[far_vis] = gen
+					far_dirty = true
 				far_vis += 1
 		var tp := Time.get_ticks_usec()
-		draw_n.push(buf_near, near_vis)
-		draw_f.push(buf_far, far_vis)
+		if near_dirty or near_vis != _pushed_near_n:
+			draw_n.push(buf_near, near_vis)
+			_pushed_near_n = near_vis
+		if _has_far and (far_dirty or far_vis != _pushed_far_n):
+			draw_f.push(buf_far, far_vis)
+			_pushed_far_n = far_vis
 		# GPU uploads: the instance buffers and the slot table.
 		push_us = Time.get_ticks_usec() - tp + slot_us
 		last_tris = near_vis * draw_near * int(cfg.near_tris) + far_vis * draw_far * int(cfg.far_tris)
 		last_draws = (1 if near_vis > 0 else 0) + (1 if far_vis > 0 else 0)
+
+	# grassTiles.js selectTileRing: tiles whose box touches the circle, stored in flat arrays.
+	func _rebuild_ring(cx: float, cz: float) -> void:
+		_ring_valid = true
+		_ring_cx = cx
+		_ring_cz = cz
+		var r2 := radius * radius
+		var tz0 := int(floor((cz - radius) / tile))
+		var tz1 := int(floor((cz + radius) / tile))
+		var tx0 := int(floor((cx - radius) / tile))
+		var tx1 := int(floor((cx + radius) / tile))
+		var n := 0
+		var any_missing := false
+		for tz in range(tz0, tz1 + 1):
+			var z0 := tz * tile
+			var z1 := z0 + tile
+			var dz := z0 - cz if cz < z0 else (cz - z1 if cz > z1 else 0.0)
+			var dz2 := dz * dz
+			if dz2 > r2:
+				continue
+			for tx in range(tx0, tx1 + 1):
+				var x0 := tx * tile
+				var x1 := x0 + tile
+				var dx := x0 - cx if cx < x0 else (cx - x1 if cx > x1 else 0.0)
+				var d2 := dx * dx + dz2
+				if d2 > r2:
+					continue
+				_r_tx[n] = tx
+				_r_tz[n] = tz
+				_r_d2[n] = d2
+				var s = by_key.get(Vector2i(tx, tz))
+				_r_slot[n] = s
+				if s == null:
+					any_missing = true
+				n += 1
+		_ring_n = n
+		_has_missing = any_missing
 
 	# One instance: identity basis moved to (tile origin x, base height, tile origin z); custom =
 	# (slot x, y, mirror bits). The base rides in the transform because MultiMesh custom data is
@@ -503,25 +708,6 @@ class Ring:
 			buf_far[k + 13] = float(s.sy)
 			buf_far[k + 14] = float(s.flips)
 
-	# grassTiles.js selectTileRing: tiles whose box touches the circle, nearest centre first.
-	func _ring(cx: float, cz: float) -> Array[Dictionary]:
-		var out: Array[Dictionary] = []
-		var r2 := radius * radius
-		for tz in range(int(floor((cz - radius) / tile)), int(floor((cz + radius) / tile)) + 1):
-			for tx in range(int(floor((cx - radius) / tile)), int(floor((cx + radius) / tile)) + 1):
-				var x0 := tx * tile
-				var z0 := tz * tile
-				var dx := maxf(maxf(x0 - cx, 0.0), cx - (x0 + tile))
-				var dz := maxf(maxf(z0 - cz, 0.0), cz - (z0 + tile))
-				var d2 := dx * dx + dz * dz
-				if d2 > r2:
-					continue
-				var ex := x0 + tile * 0.5 - cx
-				var ez := z0 + tile * 0.5 - cz
-				out.append({"key": Vector2i(tx, tz), "tx": tx, "tz": tz, "d2": d2, "c2": ex * ex + ez * ez})
-		out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.c2 < b.c2)
-		return out
-
 	# grassTiles.js _pickEvictSlot: a free slot, else the farthest one outside the ring.
 	func _evict(active: Dictionary, cx: float, cz: float) -> Dictionary:
 		var best: Dictionary = {}
@@ -531,22 +717,24 @@ class Ring:
 				return s
 			if active.has(s.key):
 				continue
-			var d := Vector2(s.ox + tile * 0.5 - cx, s.oz + tile * 0.5 - cz).length_squared()
+			var dx: float = s.ox + tile * 0.5 - cx
+			var dz: float = s.oz + tile * 0.5 - cz
+			var d := dx * dx + dz * dz
 			if d > best_d:
 				best_d = d
 				best = s
 		return best
 
-	func _assign(s: Dictionary, t: Dictionary) -> void:
-		var tx: int = t.tx
-		var tz: int = t.tz
+	func _assign(s: Dictionary, key: Vector2i, tx: int, tz: int) -> void:
 		var f := VegScatter.flip_bits(tx, tz)
-		s.key = t.key
+		s.key = key
 		s.tx = tx
 		s.tz = tz
 		s.ox = tx * tile
 		s.oz = tz * tile
 		s.flips = f.x | (f.y << 1)
+		_gen_seq += 1
+		s.gen = _gen_seq
 		# grassTiles.js computeTileBounds: 5 x 5 ground samples.
 		var lo := INF
 		var hi := -INF
@@ -584,13 +772,3 @@ class Ring:
 		slot_bytes[o1 + 2] = (bq >> 8) & 255
 		slot_bytes[o1 + 3] = (bq >> 16) & 255
 		slot_dirty_tex = true
-
-	# Frustum planes point outward: a box is out when its corner deepest along a plane's normal
-	# is still in front of that plane.
-	func _box_visible(b: AABB, planes: Array[Plane]) -> bool:
-		for p in planes:
-			var n := p.normal
-			var c := Vector3(b.position.x if n.x > 0.0 else b.end.x, b.position.y if n.y > 0.0 else b.end.y, b.position.z if n.z > 0.0 else b.end.z)
-			if n.dot(c) - p.d > 0.0:
-				return false
-		return true
