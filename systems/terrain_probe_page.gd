@@ -32,11 +32,15 @@ const CLASSIC_IND := 64
 const CLASSIC_RAMP := 128
 const OUT_ALBEDO := 256
 const NAN_POW := 1024
+const MATH_MODE := 2048
 
 # Frames a fresh grass system gets to bake its rings (4 new tiles a frame per ring).
 const BAKE_FRAMES := 45
 
 # post: "dev" = what the game picks on this device, "alt" = the other mode.
+# isnan: the terrain shader with one isnan() call put back, as every shader had in s1-2.
+# info: shown but not counted in the verdict ("math" rows read FAST or SAFE; the "s1-2" row is
+# s1-2's failing combination and is expected to read BLACK on the iPhone only).
 # bake: run that ring's real bakes first ("grass", "flowers" or "both"); rows before the first
 # bake row run with no grass system in the scene. Most telling rows first: a phone screenshot
 # may cut the list.
@@ -49,8 +53,10 @@ const VARIANTS: Array[Dictionary] = [
 	{"name": "OLD reversed smoothsteps", "bits": LEGACY_RSTEP},
 	{"name": "OLD rim pow + normalize", "bits": LEGACY_MISC},
 	{"name": "OLD all three (s1-2 math)", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC},
-	{"name": "no isnan in shader", "bits": 0, "no_isnan": true},
-	{"name": "no isnan + OLD trail pow", "bits": LEGACY_POW, "no_isnan": true},
+	{"name": "math mode (green = fast)", "bits": MATH_MODE, "info": "math"},
+	{"name": "isnan() added: math mode", "bits": MATH_MODE, "isnan": true, "info": "math"},
+	{"name": "isnan() added + OLD trail pow", "bits": LEGACY_POW, "isnan": true, "info": "s1-2"},
+	{"name": "isnan() added, fixed math", "bits": 0, "isnan": true},
 	{"name": "other post mode", "bits": 0, "post": "alt"},
 	{"name": "painterly off (classic)", "bits": 0, "classic": true},
 	{"name": "classic + OLD all three", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC, "classic": true},
@@ -74,7 +80,7 @@ var _vp: SubViewport
 var _env: Node3D
 var _terrain: Node3D
 var _shader: Shader
-var _shader_no_isnan: Shader
+var _shader_isnan: Shader
 var _float_targets := true
 var _grass: Node3D
 
@@ -172,10 +178,12 @@ func _build_scene() -> void:
 	cam.rotation = Vector3(float(p.pitch), float(p.yaw), 0.0)
 	_vp.add_child(cam)
 	_shader = _terrain.mat.shader
-	# The same terrain shader with no isnan() anywhere in its source: tells whether the mere
-	# presence of isnan() changes how the driver compiles the rest of the shader.
-	_shader_no_isnan = Shader.new()
-	_shader_no_isnan.code = _shader.code.replace("#define W_DBG", "#define W_DBG\n#define W_NO_ISNAN")
+	# The same terrain shader with one isnan() call put back (the shipped shaders have none): it
+	# shows whether the mere presence of isnan() changes how the driver compiles the whole shader.
+	var hook := "\tALBEDO = w_grade(lit, SCREEN_UV, VIEWPORT_SIZE);"
+	assert(_shader.code.contains(hook))
+	_shader_isnan = Shader.new()
+	_shader_isnan.code = _shader.code.replace(hook, "\tif (isnan(lit.x)) {\n\t\tlit = vec3(0.0);\n\t}\n" + hook)
 
 
 # Replaces the grass system with a fresh one that bakes only the named ring(s) around the camera,
@@ -222,7 +230,7 @@ func _run() -> void:
 		var post_dev: bool = _float_targets
 		var post: bool = post_dev if str(v.get("post", "dev")) == "dev" else not post_dev
 		var row := {"name": v.name, "bits": int(v.bits), "post": post, "classic": bool(v.get("classic", false)),
-			"no_isnan": bool(v.get("no_isnan", false)), "control": bool(v.get("control", false))}
+			"isnan": bool(v.get("isnan", false)), "control": bool(v.get("control", false)), "info": str(v.get("info", ""))}
 		if post and not _float_targets:
 			row.verdict = "N/A"
 			row.note = "no float colour buffers"
@@ -236,7 +244,7 @@ func _run() -> void:
 		_vp.use_hdr_2d = post
 		_env.set_post(post)
 		_set_style(row.classic)
-		_terrain.mat.shader = _shader_no_isnan if row.no_isnan else _shader
+		_terrain.mat.shader = _shader_isnan if row.isnan else _shader
 		_terrain.mat.set_shader_parameter("dbg_terrain", row.bits)
 		for i in 3:
 			await get_tree().process_frame
@@ -259,6 +267,8 @@ func _run() -> void:
 		row.black_frame = snappedf(all.black, 0.001)
 		row.black_ref = [snappedf(ref.x, 0.001), snappedf(ref.y, 0.001), snappedf(ref.z, 0.001)]
 		row.verdict = "BLACK" if g.black > BLACK_GROUND_SHARE or all.black > BLACK_FRAME_SHARE else "OK"
+		if row.info == "math":
+			row.verdict = "SAFE" if g.mean.x > g.mean.y else "FAST"
 		var thumb := img.duplicate()
 		thumb.convert(Image.FORMAT_RGBA8)
 		row.thumb = ImageTexture.create_from_image(thumb)
@@ -272,7 +282,7 @@ func _run() -> void:
 			var ref_a: Array = r.get("black_ref", [1.0, 1.0, 1.0])
 			if r.verdict != "N/A" and (r.verdict != "BLACK" or maxf(ref_a[0], maxf(ref_a[1], ref_a[2])) > 0.3):
 				control_ok = false
-		elif r.verdict != "OK" and r.verdict != "N/A":
+		elif r.info == "" and r.verdict != "OK" and r.verdict != "N/A":
 			bad += 1
 	var result := {
 		"probe": "terrain",
@@ -347,6 +357,8 @@ func _render_result(r: Dictionary, rows: Array[Dictionary]) -> void:
 		var col := Color(0.55, 0.95, 0.6) if good else Color(1.0, 0.5, 0.45)
 		if verdict == "N/A":
 			col = Color(0.6, 0.63, 0.68)
+		elif row.info != "":
+			col = Color(0.95, 0.85, 0.55)
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 5)
 		var tr := TextureRect.new()

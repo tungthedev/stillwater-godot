@@ -44,7 +44,7 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.545
 float fx_l(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 fx_encode(vec3 c) { vec3 x = c * exposure * WB; return x / (1.0 + fx_l(x)); }
 vec3 fx_decode(vec3 t) { return t / max(1.0 - fx_l(t), 1e-3) / max(exposure * WB, vec3(1e-4)); }
-float fx_luma(vec3 t) { return sqrt(fx_l(t)); }
+float fx_luma(vec3 t) { return sqrt(max(fx_l(t), 0.0)); }
 
 void fragment() {
 	vec2 uv = UV;

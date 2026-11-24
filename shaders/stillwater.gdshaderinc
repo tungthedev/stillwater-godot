@@ -43,8 +43,11 @@ const float vignette = 0.28;
 #define DBG_CLASSIC_RAMP 128
 #define DBG_OUT_ALBEDO 256
 #define DBG_NAN_POW 1024
+#define DBG_MATH_MODE 2048
 #ifdef W_DBG
 uniform int dbg_terrain = 0;
+// Always 0; a uniform so the compiler cannot work out 0 / 0 itself (DBG_MATH_MODE).
+uniform float dbg_zero = 0.0;
 #define DBG(bit) ((dbg_terrain & (bit)) != 0)
 #else
 #define DBG(bit) false
@@ -60,22 +63,16 @@ float w_rstep(float hi, float lo, float x) {
 	return 1.0 - smoothstep(lo, hi, x);
 }
 
-// NaN -> fallback. The bit test is integer work, which a fast-math compiler cannot fold away the
-// way it may fold isnan().
-// isnan() is more than a test here: ANGLE's Metal backend (Safari) compiles any shader that calls
-// isnan() or isinf() with safe math instead of fast math, so every shader including this file
-// follows IEEE rules on iPhone and undefined GLSL (pow of a negative base, ...) gives real NaNs.
-// It stays, because that is the mode all of these shaders are known to render in on the phone;
-// ?probe=terrain's "no isnan" rows show what dropping it (W_NO_ISNAN) would do.
+// NaN -> fallback, by testing the float's bits. Never isnan() or isinf() in these shaders:
+// ANGLE's Metal backend (Safari) compiles any shader that calls one of them with safe math
+// instead of fast math. That costs speed on iPhone, and it turned an old pow() of a negative
+// base in the terrain into real NaNs (build s1-2: black ground). The bit test is integer work,
+// which keeps fast math on and which a fast-math compiler cannot fold away.
 vec3 w_denan(vec3 c, vec3 fallback) {
 	if (DBG(DBG_NO_GUARD)) {
 		return c;
 	}
-	bvec3 bad = greaterThan(floatBitsToUint(c) & uvec3(2147483647u), uvec3(2139095040u));
-#ifndef W_NO_ISNAN
-	bad = bvec3(bad.x || isnan(c.x), bad.y || isnan(c.y), bad.z || isnan(c.z));
-#endif
-	return mix(c, fallback, bad);
+	return mix(c, fallback, greaterThan(floatBitsToUint(c) & uvec3(2147483647u), uvec3(2139095040u)));
 }
 
 // normalize() of a zero vector is undefined; this returns zero for it instead.

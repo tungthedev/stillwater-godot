@@ -72,7 +72,8 @@ void vertex() {
 		float gust = smoothstep(0.3, 0.8, textureLod(noise_tex, xz * 0.010 - wind_dir * TIME * 0.042, 0.0).r);
 		vec2 sway = wind_dir * (gust * 0.6 + 0.1) * (0.3 + wind_strength) + vec2(sin(TIME * 2.3 + rnd.z * 9.0), cos(TIME * 1.9 + rnd.x * 7.0)) * 0.05;
 		vec3 to_c = normalize(CAMERA_POSITION_WORLD - vec3(xz.x, h + stem_h, xz.y));
-		vec3 hr = normalize(cross(vec3(0.0, 1.0, 0.0), to_c));
+		// The cross product is zero when the camera is straight above the flower.
+		vec3 hr = normalize(cross(vec3(0.0, 1.0, 0.0), to_c) + vec3(1e-5, 0.0, 0.0));
 		vec3 p;
 		if (part < 0.5) {
 			float y = VERTEX.y;
@@ -115,19 +116,20 @@ void fragment() {
 		vec2 q = v_uv * 2.0 - 1.0;
 		float env = sin(clamp((q.y + 1.0) * 0.5, 0.0, 1.0) * 3.14159);
 		float tier = abs(sin((q.y + 1.0) * 9.5));
-		float w_lim = (0.36 + 0.52 * pow(env, 0.7)) * (0.55 + 0.45 * tier);
+		float w_lim = (0.36 + 0.52 * pow(max(env, 0.0), 0.7)) * (0.55 + 0.45 * tier);
 		if (abs(q.x) > w_lim || abs(q.y) > 0.94) discard;
 		vec3 tip_col = mix(v_col * 0.80, vec3(0.86, 0.82, 1.0), smoothstep(-0.2, 0.85, q.y) * 0.42);
 		dcol = tip_col * (0.74 + 0.28 * tier) * v_ao;
 	} else {
 		vec2 q = v_uv * 2.0 - 1.0;
 		float r = length(q);
-		float a = atan(q.y, q.x);
+		// atan(0, 0) is undefined (the exact centre of the flower head).
+		float a = r > 1e-6 ? atan(q.y, q.x) : 0.0;
 		float petals = v_kind < 0.5 ? 10.0 : 5.0;
 		float shape = (v_kind < 0.5 ? 0.54 : 0.56) + (v_kind < 0.5 ? 0.46 : 0.44) * abs(cos(a * petals * 0.5));
 		if (r > shape) discard;
 		vec3 col = mix(v_col * 0.72, v_col * 1.12, smoothstep(0.18, 0.88, r));
-		float center = smoothstep(0.28, 0.14, r);
+		float center = w_rstep(0.28, 0.14, r);
 		col = mix(col, v_kind < 0.5 ? vec3(1.0, 0.76, 0.10) : v_kind < 1.5 ? vec3(0.84, 0.46, 0.04) : vec3(0.95, 0.78, 0.22), center);
 		dcol = col * v_ao;
 	}

@@ -45,13 +45,13 @@ void sky() {
 	if (sd < sun_r * 2.2) {
 		float x = clamp(sd / sun_r, 0.0, 1.0);
 		float limb = 1.0 - 0.55 * (1.0 - sqrt(1.0 - x * x));
-		float disc = smoothstep(1.18, 0.72, sd / sun_r);
+		float disc = w_rstep(1.18, 0.72, sd / sun_r);
 		col += sun_col * disc * limb * 24.0;
 	}
 	col += sun_col * pow(max(mu, 0.0), 140.0) * 0.78 + sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
 	vec4 ci = cirrus(dir, POSITION);
 	col = mix(col, ci.rgb, ci.a);
-	col = clamp(mix(col, vec3(0.0), isnan(col)), vec3(0.0), vec3(200.0));
+	col = clamp(w_denan(col, vec3(0.0)), vec3(0.0), vec3(200.0));
 	float fz = max(dot(dir, cam_fwd), 1e-3);
 	float aspect = view_size.x / max(view_size.y, 1.0);
 	vec2 ndc = vec2(dot(dir, cam_right) / (fz * tan_half_fov * aspect), dot(dir, cam_up) / (fz * tan_half_fov));

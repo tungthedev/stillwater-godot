@@ -80,7 +80,7 @@ void fragment() {
 		vec2 tsz = UV * 1024.0;
 		vec2 ddx = dFdx(tsz);
 		vec2 ddy = dFdy(tsz);
-		float mip = max(0.0, 0.5 * log2(max(dot(ddx, ddx), dot(ddy, ddy))));
+		float mip = max(0.0, 0.5 * log2(max(max(dot(ddx, ddx), dot(ddy, ddy)), 1e-12)));
 		a *= 1.0 + mip * 0.30;
 	}
 	if (a < 0.44) {
@@ -118,7 +118,7 @@ void fragment() {
 		base_albedo = dcol;
 	} else {
 		// Painterly crown: cool shadow side, warm lit side, soft pockets between clumps.
-		vec3 Nw = normalize(v_wn);
+		vec3 Nw = w_normalize(v_wn);
 		float sunSide = clamp(dot(Nw, sun_dir) * 0.5 + 0.5, 0.0, 1.0);
 		float coreAO = clamp(v_crown.x, 0.26, 1.08);
 		float topG = clamp(v_crown.y, 0.0, 1.0);
@@ -139,7 +139,7 @@ void fragment() {
 	}
 
 	float sun_vis = w_cloud_shadow(v_wpos, cam);
-	vec3 n = normalize(v_ln);
+	vec3 n = w_normalize(v_ln);
 	float ramp = w_toon_ramp(dot(n, sun_dir), 0.48, 0.14, 0.56, camD);
 	vec3 direct = ramp * light_col * sun_vis * dcol / PI;
 	vec3 ind = w_indirect(n, dcol);
@@ -147,11 +147,11 @@ void fragment() {
 	vec3 emis = vec3(0.0);
 	{
 		vec3 Vw = normalize(v_wpos - cam);
-		vec3 nW = normalize(v_wn);
+		vec3 nW = w_normalize(v_wn);
 		float lit = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
 		float isLeaf = step(0.5, v_crown.z);
 		float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
-		float rim = pow(1.0 - abs(dot(nW, -Vw)), 2.2);
+		float rim = pow(max(1.0 - abs(dot(nW, -Vw)), 0.0), 2.2);
 		float sunEdge = smoothstep(-0.18, 0.52, dot(nW, sun_dir));
 		vec3 transTint = vec3(0.95, 1.02, 0.68);
 		float edgeMask = 0.35 + 0.65 * v_crown.x;

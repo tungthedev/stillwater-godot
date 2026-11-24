@@ -48,7 +48,8 @@ M (music). The clock stays at 16:00.
   only) offscreen once per variant and shows OK / BLACK per row with the ground colour, plus
   `window.__probe`: default, the other post mode, classic style, light floor off, atmosphere
   bypassed, classic indirect, classic toon ramp, NaN guards off, albedo only, each old
-  undefined-behaviour construct switched back on, and the shader compiled without `isnan()`. Those
+  undefined-behaviour construct switched back on, the driver's math mode (FAST or SAFE), and the
+  terrain shader with one `isnan()` call put back as in s1-2 (rows in yellow are information only). Those
   rows run with no grass system; the last rows first run the real grass bake, the flower bake, or
   both, hide the blades and render the terrain again. The two CONTROL rows force a NaN and must
   read BLACK. Desktop:

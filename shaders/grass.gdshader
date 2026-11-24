@@ -106,7 +106,8 @@ void vertex() {
 		vec2 to_p = xz - player_xz;
 		float pd = length(to_p);
 		float push = 1.0 - smoothstep(0.2, 1.1, pd);
-		vec2 bend_dir = normalize(fwd * 0.48 + wind_dir * (0.25 + wave * 1.45) + (to_p / max(pd, 0.01)) * push * 3.0);
+		vec2 bend_dir = fwd * 0.48 + wind_dir * (0.25 + wave * 1.45) + (to_p / max(pd, 0.01)) * push * 3.0;
+		bend_dir *= inversesqrt(max(dot(bend_dir, bend_dir), 1e-12));
 		bend += push * 1.2;
 		float c = y * y * bend;
 		vec3 p;
@@ -148,7 +149,7 @@ void fragment() {
 		vec3 cam = CAMERA_POSITION_WORLD;
 		float cam_d = length(v_wpos - cam);
 		vec3 dcol = v_col * mix(0.84, 1.0, smoothstep(0.0, 0.45, v_y));
-		vec3 n = normalize(v_n);
+		vec3 n = w_normalize(v_n);
 		float sun_vis = w_cloud_shadow(v_wpos, cam);
 		float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.18, 0.62, cam_d);
 		vec3 direct = ramp * light_col * sun_vis * dcol / PI;

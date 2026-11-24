@@ -448,4 +448,10 @@ void fragment() {
 		lit = albedo;
 	}
 	ALBEDO = w_grade(lit, SCREEN_UV, VIEWPORT_SIZE);
+	if (DBG(DBG_MATH_MODE)) {
+		// 0 / 0 is NaN and NaN != NaN, unless the compiler runs fast math and folds the test away:
+		// red = IEEE (safe) math, green = fast math.
+		float q = dbg_zero / dbg_zero;
+		ALBEDO = godot_out(q != q ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0));
+	}
 }
