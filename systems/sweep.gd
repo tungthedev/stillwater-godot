@@ -27,6 +27,7 @@ var env_sys: Node
 var post: Node
 var terrain_sys: Node
 var water_sys: Node
+var props_sys: Node
 var trees_sys: Node
 var grass_sys: Node
 var clouds_sys: Node
@@ -75,6 +76,7 @@ var _base_grass := true
 var _base_grass_painted := true
 var _base_trees := true
 var _base_water := true
+var _base_props := true
 var _base_clouds := true
 var _base_cloud_billboard := false
 var _base_sky_clouds := true
@@ -94,6 +96,7 @@ func setup(nodes: Dictionary) -> void:
 	post = nodes.post
 	terrain_sys = nodes.terrain
 	water_sys = nodes.get("water", null)
+	props_sys = nodes.get("props", null)
 	trees_sys = nodes.trees
 	grass_sys = nodes.grass
 	clouds_sys = nodes.clouds
@@ -129,6 +132,7 @@ func start() -> void:
 	_base_grass_painted = grass_sys.is_painted()
 	_base_trees = trees_sys.is_on()
 	_base_water = water_sys != null and water_sys.is_on()
+	_base_props = props_sys != null and props_sys.is_on()
 	_base_cloud_billboard = clouds_sys.is_on()
 	_base_sky_clouds = env_sys.sky_clouds_on
 	_base_clouds = _base_cloud_billboard or _base_sky_clouds
@@ -218,6 +222,10 @@ func _build_variants() -> void:
 		_variants.append({"id": "water_off", "label": "water off", "disjoint": true})
 	else:
 		_skipped.append("water_off (base water off)")
+	if _base_props:
+		_variants.append({"id": "props_off", "label": "props off", "disjoint": true})
+	else:
+		_skipped.append("props_off (base props off)")
 	_variants.append({"id": "sky_flat", "label": "sky flat", "disjoint": true})
 	if _base_clouds:
 		_variants.append({"id": "clouds_off", "label": "clouds off", "disjoint": true})
@@ -243,6 +251,8 @@ func _set_systems_frozen(v: bool) -> void:
 	terrain_sys.set_frozen(v)
 	grass_sys.set_frozen(v)
 	trees_sys.set_frozen(v)
+	if props_sys != null:
+		props_sys.set_frozen(v)
 	env_sys.set_frozen(v)
 	post.set_frozen(v)
 	cam.set_process(not v)
@@ -268,6 +278,8 @@ func _reset_to_base() -> void:
 	trees_sys.set_impostors_on(true)
 	if water_sys != null:
 		water_sys.set_on(_base_water)
+	if props_sys != null:
+		props_sys.set_on(_base_props)
 	env_sys.set_sky_flat(false)
 	env_sys.set_cirrus_on(true)
 	env_sys.set_sky_clouds_on(_base_sky_clouds)
@@ -288,6 +300,8 @@ func _apply_variant(id: String) -> void:
 			terrain_sys.set_on(false)
 			if water_sys != null:
 				water_sys.set_on(false)
+			if props_sys != null:
+				props_sys.set_on(false)
 			grass_sys.set_on(false)
 			trees_sys.set_on(false)
 			trees_sys.set_impostors_on(false)
@@ -333,6 +347,9 @@ func _apply_variant(id: String) -> void:
 		"water_off":
 			if water_sys != null:
 				water_sys.set_on(false)
+		"props_off":
+			if props_sys != null:
+				props_sys.set_on(false)
 		"sky_flat":
 			env_sys.set_sky_flat(true)
 		"clouds_off":

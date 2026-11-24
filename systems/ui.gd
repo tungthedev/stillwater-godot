@@ -23,6 +23,7 @@ var cam: Camera3D
 var terrain_sys: Node
 var trees_sys: Node
 var water_sys: Node
+var props_sys: Node
 var post: Node
 var build_id := ""
 # In the game the readout and levers hide behind G / the pause sheet's Perf button (?debug shows
@@ -60,6 +61,7 @@ func setup(nodes: Dictionary) -> void:
 	terrain_sys = nodes.terrain
 	trees_sys = nodes.trees
 	water_sys = nodes.get("water", null)
+	props_sys = nodes.get("props", null)
 	post = nodes.post
 	build_id = nodes.build
 	game = nodes.get("game", false)
@@ -141,6 +143,8 @@ func _apply_dist_dens(rebuild_grass: bool) -> void:
 	var d: Dictionary = DISTS[dist_i]
 	cam.far = d.far
 	trees_sys.set_levers(DENS[dens_i], d.radii)
+	if props_sys != null:
+		props_sys.set_dist_scale(d.radii)
 	if rebuild_grass:
 		grass_sys.set_density(DENS[dens_i])
 
@@ -242,6 +246,9 @@ func settings() -> Dictionary:
 		"water": water_sys != null and water_sys.is_on(),
 		"water_tris": water_sys.last_tris if water_sys != null else 0,
 		"water_draws": water_sys.last_draws if water_sys != null else 0,
+		"props": props_sys != null and props_sys.is_on(),
+		"props_tris": props_sys.last_tris if props_sys != null else 0,
+		"props_draws": props_sys.last_draws if props_sys != null else 0,
 		"style": env_sys.style,
 		"ground": terrain_sys.ground_mode(),
 		"grass_mode": grass_sys.grass_mode(),

@@ -280,6 +280,78 @@ func waterfall_info() -> Dictionary:
 	return {}
 
 
+func props_info() -> Dictionary:
+	if meta.has("props") and meta.props is Dictionary:
+		return meta.props
+	return {}
+
+
+# Loads data/valley/web/rocks.bin: 10 float32 values per rock
+# [x, y, z, sx, sy, sz, rot, tilt_x, tilt_z, kind_flags].
+func load_rocks() -> Dictionary:
+	if not meta.has("rocks"):
+		return {}
+	var rm: Dictionary = meta.rocks
+	var n := int(rm.count)
+	var bytes := FileAccess.get_file_as_bytes(dir.path_join(rm.file))
+	if bytes.size() != n * 40:
+		push_error("compact_world: %s is %d bytes, expected %d" % [rm.file, bytes.size(), n * 40])
+		return {}
+	var vals := bytes.to_float32_array()
+	var x := PackedFloat32Array()
+	var y := PackedFloat32Array()
+	var z := PackedFloat32Array()
+	var sx := PackedFloat32Array()
+	var sy := PackedFloat32Array()
+	var sz := PackedFloat32Array()
+	var rot := PackedFloat32Array()
+	var tx := PackedFloat32Array()
+	var tz := PackedFloat32Array()
+	var kind := PackedByteArray()
+	var is_prop := PackedByteArray()
+	x.resize(n); y.resize(n); z.resize(n)
+	sx.resize(n); sy.resize(n); sz.resize(n)
+	rot.resize(n); tx.resize(n); tz.resize(n)
+	kind.resize(n); is_prop.resize(n)
+	for i in n:
+		var o := i * 10
+		x[i] = vals[o]
+		y[i] = vals[o + 1]
+		z[i] = vals[o + 2]
+		sx[i] = vals[o + 3]
+		sy[i] = vals[o + 4]
+		sz[i] = vals[o + 5]
+		rot[i] = vals[o + 6]
+		tx[i] = vals[o + 7]
+		tz[i] = vals[o + 8]
+		var kf := int(vals[o + 9])
+		kind[i] = kf & 3
+		is_prop[i] = (kf >> 4) & 1
+	return {
+		"count": n,
+		"canonical_count": int(rm.canonicalCount),
+		"x": x, "y": y, "z": z,
+		"sx": sx, "sy": sy, "sz": sz,
+		"rot": rot, "tilt_x": tx, "tilt_z": tz,
+		"kind": kind, "is_prop": is_prop,
+	}
+
+
+func load_signpost_tex() -> ImageTexture:
+	if not meta.has("signpostTex"):
+		return null
+	var sm: Dictionary = meta.signpostTex
+	var bytes := FileAccess.get_file_as_bytes(dir.path_join(sm.file))
+	var img := Image.new()
+	if bytes.is_empty() or img.load_png_from_buffer(bytes) != OK:
+		push_error("compact_world: cannot decode %s" % dir.path_join(sm.file))
+		return null
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
 func walk_points() -> PackedVector2Array:
 	var out := PackedVector2Array()
 	for p in meta.walk:

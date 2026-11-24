@@ -188,7 +188,8 @@ func _check_compact(samples: Array, w: RefCounted) -> void:
 	if c.biome_bytes != w.biome_rgb:
 		_fail("compact biome bytes differ from biome_rgb.u8")
 	_check_compact_trees(c, w)
-	for stop in ["trailhead", "forest"]:
+	_check_compact_rocks_and_props(c, w)
+	for stop in ["trailhead", "forest", "cottage"]:
 		var p: Dictionary = c.pose(stop)
 		var e := absf(c.height_near(p.position[0], p.position[2]) + float(c.meta.poses.eyeHeight) - float(p.position[1]))
 		if e > COMPACT_HEIGHT_TOL:
@@ -256,6 +257,42 @@ func _check_compact_trees(c: RefCounted, w: RefCounted) -> void:
 		_fail("tree pack scale/rotation/tint quantisation error too large")
 	if kind_bad > 0:
 		_fail("tree pack kinds differ for %d trees" % kind_bad)
+
+
+func _check_compact_rocks_and_props(c: RefCounted, w: RefCounted) -> void:
+	var r: Dictionary = c.load_rocks()
+	if r.is_empty():
+		_fail("rock pack failed to load")
+		return
+	var cn: int = int(r.canonical_count)
+	if cn != w.rock_count:
+		_fail("rock pack canonical count %d != %d" % [cn, w.rock_count])
+		return
+	var e_xz := 0.0
+	var e_s := 0.0
+	var e_rot := 0.0
+	var kind_bad := 0
+	for i in cn:
+		e_xz = maxf(e_xz, Vector2(r.x[i] - w.rock_x[i], r.z[i] - w.rock_z[i]).length())
+		e_s = maxf(e_s, absf(r.sx[i] - w.rock_s[i]))
+		e_rot = maxf(e_rot, absf(angle_difference(r.rot[i], w.rock_rot[i])))
+		if r.kind[i] != w.rock_kind[i]:
+			kind_bad += 1
+	var prop_stones := int(r.count) - cn
+	print("rock pack: %d canonical + %d prop stones, max err xz %.5f m, s %.5f, rot %.5f rad, kind bad %d" % [
+		cn, prop_stones, e_xz, e_s, e_rot, kind_bad])
+	if e_xz > 1e-3 or e_s > 1e-4 or e_rot > 1e-4 or kind_bad > 0:
+		_fail("rock pack canonical values mismatch (xz=%.5f s=%.5f rot=%.5f kind_bad=%d)" % [e_xz, e_s, e_rot, kind_bad])
+	var pi: Dictionary = c.props_info()
+	if pi.is_empty() or not pi.has("house") or not pi.has("signpost") or not pi.has("benches") or pi.benches.size() != 3:
+		_fail("props metadata missing house/signpost/3 benches")
+	var stex: ImageTexture = c.load_signpost_tex()
+	if stex == null or stex.get_width() != 512 or stex.get_height() != 384:
+		_fail("signpost texture missing or wrong dimensions")
+	else:
+		print("props meta: cottage (%.1f, %.1f), %d benches, %d fence runs, %d lanterns, signpost %dx%d ok" % [
+			float(pi.house.x), float(pi.house.z), pi.benches.size(), pi.fences.size(), pi.lanterns.size(),
+			stex.get_width(), stex.get_height()])
 
 
 # Grass and flower roots and randoms, every rank, against Stillwater's own generateTileScatter.
