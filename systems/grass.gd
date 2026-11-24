@@ -43,7 +43,7 @@ const GRASS_PAINTED := {
 const FLOWERS := {
 	"tile": 12.0, "slot_w": 32, "max_count": 1440, "seed": 4242, "fields": 2,
 	"radius": 22.5, "near": 576, "far": 576, "near_lod": INF, "far_width": 1.0,
-	"near_tris": 4, "far_tris": 4,
+	"near_tris": 6, "far_tris": 6,
 	"pad_xz": 0.9, "pad_down": 0.5, "pad_up": 2.0, "empty_below": 0.2,
 }
 # Grass and flowers each enter tiles; this per-ring time budget keeps the pair under ~2 ms.
@@ -374,7 +374,8 @@ func _blade_mesh(sc: Dictionary, count: int, segs: int, is_near: bool = true) ->
 	return _mesh(verts, PackedVector2Array(), c0, c1, idx)
 
 
-# Stillwater's flowerGeometry: a stem quad (part 0) and a head quad (part 1) per rank.
+# Opaque flower geometry: a 2-triangle stem quad (part 0) and a 4-triangle hexagon head (part 1)
+# per rank, with top/bottom apex vertices so both disc blossoms and lupine spikes draw with no discard.
 func _flower_mesh(count: int = FLOWERS.near) -> ArrayMesh:
 	var sc: Dictionary = VegScatter.generate(FLOWERS.max_count, FLOWERS.tile, FLOWERS.seed)
 	var local: PackedFloat32Array = sc.local
@@ -384,17 +385,45 @@ func _flower_mesh(count: int = FLOWERS.near) -> ArrayMesh:
 	var c0 := PackedFloat32Array()
 	var c1 := PackedFloat32Array()
 	var idx := PackedInt32Array()
-	var quad_uv := [Vector2(0, 0), Vector2(1, 0), Vector2(0, 1), Vector2(1, 1)]
+	const HX := 0.4330127
+	const HZ := 0.25
+	var stem_verts := [Vector3(-0.5, 0, 0), Vector3(0.5, 0, 0), Vector3(-0.5, 1, 0), Vector3(0.5, 1, 0)]
+	var stem_uv := [Vector2(0, 0), Vector2(1, 0), Vector2(0, 1), Vector2(1, 1)]
+	var head_verts := [
+		Vector3(0.0, 1.0, 0.5),
+		Vector3(HX, 1.0, HZ),
+		Vector3(HX, 1.0, -HZ),
+		Vector3(0.0, 1.0, -0.5),
+		Vector3(-HX, 1.0, -HZ),
+		Vector3(-HX, 1.0, HZ),
+	]
+	var head_uv := [
+		Vector2(0.5, 1.0),
+		Vector2(0.5 + HX, 0.5 + HZ),
+		Vector2(0.5 + HX, 0.5 - HZ),
+		Vector2(0.5, 0.0),
+		Vector2(0.5 - HX, 0.5 - HZ),
+		Vector2(0.5 - HX, 0.5 + HZ),
+	]
 	for b in count:
-		var base := b * 8
-		verts.append_array([Vector3(-0.5, 0, 0), Vector3(0.5, 0, 0), Vector3(-0.5, 1, 0), Vector3(0.5, 1, 0)])
-		verts.append_array([Vector3(-0.5, 1, -0.5), Vector3(0.5, 1, -0.5), Vector3(-0.5, 1, 0.5), Vector3(0.5, 1, 0.5)])
-		for v in 8:
-			uvs.append(quad_uv[v % 4])
-			c0.append_array([local[b * 2], local[b * 2 + 1], float(b), 0.0 if v < 4 else 1.0])
-			c1.append_array([rnd[b * 4], rnd[b * 4 + 1], rnd[b * 4 + 2], rnd[b * 4 + 3]])
+		var base := b * 10
+		var lx := local[b * 2]
+		var lz := local[b * 2 + 1]
+		var fb := float(b)
+		var r0 := rnd[b * 4]
+		var r1 := rnd[b * 4 + 1]
+		var r2 := rnd[b * 4 + 2]
+		var r3 := rnd[b * 4 + 3]
+		verts.append_array(stem_verts)
+		verts.append_array(head_verts)
+		uvs.append_array(stem_uv)
+		uvs.append_array(head_uv)
+		for v in 10:
+			c0.append_array([lx, lz, fb, 0.0 if v < 4 else 1.0])
+			c1.append_array([r0, r1, r2, r3])
 		idx.append_array([base, base + 1, base + 2, base + 1, base + 3, base + 2])
-		idx.append_array([base + 4, base + 6, base + 5, base + 5, base + 6, base + 7])
+		var h := base + 4
+		idx.append_array([h, h + 1, h + 2, h, h + 2, h + 3, h, h + 3, h + 4, h, h + 4, h + 5])
 	return _mesh(verts, uvs, c0, c1, idx)
 
 
@@ -532,6 +561,9 @@ class Ring:
 
 		draw_mat = ShaderMaterial.new()
 		draw_mat.shader = load(draw_shader)
+		# Both grass blades and opaque hexagon flowers have zero discard, so draw them at priority -1
+		# alongside terrain and opaque tree cores ahead of all discard geometry for Apple TBDR HSR.
+		draw_mat.render_priority = -1
 		draw_mat.set_shader_parameter("atlas", vp.get_texture())
 		draw_mat.set_shader_parameter("noise_tex", world.noise_tex)
 		draw_mat.set_shader_parameter("sky_lut", world.sky_lut_tex)

@@ -1,8 +1,9 @@
 // Stillwater's wildflowers (src/world/grass.js FLOWER_VERTEX and its patched material) on Godot.
 //
-// Same tile instancing as shaders/grass.gdshader. Each flower is a camera-facing stem quad
-// (CUSTOM0.w = 0) and a head quad (CUSTOM0.w = 1) whose petals are cut in the fragment shader;
-// species 2 (lupine) is an upright spike. Two atlas texels per flower (shaders/flower_bake.gdshader).
+// Same tile instancing as shaders/grass.gdshader. Each flower is an opaque camera-facing stem quad
+// (CUSTOM0.w = 0) and an opaque 4-triangle hexagon head (CUSTOM0.w = 1) with no discard so flowers
+// join the opaque HSR-friendly draw set; species 2 (lupine) stretches the hexagon into a tapered
+// upright spike. Two atlas texels per flower (shaders/flower_bake.gdshader).
 //
 // Lighting at hour 16, unshaded here: toon sun ramp with an up normal (Stillwater's flowers use the
 // plain object normal), hemisphere fill, aerial perspective, post grade. Its specular is left out
@@ -81,7 +82,9 @@ void vertex() {
 			p.xz += sway * y * y * stem_h;
 		} else {
 			if (kind > 1.5 && kind < 2.5) {
-				p = vec3(local.x, h + stem_h * 0.88, local.y) + hr * VERTEX.x * head_s * 0.42 + vec3(0.0, 1.0, 0.0) * (VERTEX.z + 0.15) * head_s * 1.55;
+				// Taper the upper half of the hexagon into a pointed lupine spire with no discard.
+				float taper = mix(1.0, 0.72, smoothstep(-0.2, 0.5, VERTEX.z));
+				p = vec3(local.x, h + stem_h * 0.88, local.y) + hr * VERTEX.x * (head_s * 0.36 * taper) + vec3(0.0, 1.0, 0.0) * (VERTEX.z + 0.15) * head_s * 1.50;
 			} else {
 				float tilt_a = rnd.z * 6.2831;
 				vec3 tilt_dir = vec3(cos(tilt_a), 0.0, sin(tilt_a));
@@ -91,7 +94,8 @@ void vertex() {
 				float rot_h = rnd.x * 6.2831;
 				vec3 ax1 = hr3 * cos(rot_h) + hu3 * sin(rot_h);
 				vec3 ax2 = -hr3 * sin(rot_h) + hu3 * cos(rot_h);
-				p = vec3(local.x, h + stem_h, local.y) + ax1 * VERTEX.x * head_s * 1.12 + ax2 * VERTEX.z * head_s * 1.12;
+				// Hexagon radius ~0.89 of the old quad matches average scalloped-petal area.
+				p = vec3(local.x, h + stem_h, local.y) + ax1 * VERTEX.x * head_s * 1.00 + ax2 * VERTEX.z * head_s * 1.00;
 			}
 			p.xz += sway * stem_h;
 		}
@@ -113,10 +117,7 @@ void fragment() {
 		dcol = vec3(0.12, 0.32, 0.06) * mix(0.65, 1.05, v_uv.y);
 	} else if (v_kind > 1.5 && v_kind < 2.5) {
 		vec2 q = v_uv * 2.0 - 1.0;
-		float env = sin(clamp((q.y + 1.0) * 0.5, 0.0, 1.0) * 3.14159);
 		float tier = abs(sin((q.y + 1.0) * 9.5));
-		float w_lim = (0.36 + 0.52 * pow(max(env, 0.0), 0.7)) * (0.55 + 0.45 * tier);
-		if (abs(q.x) > w_lim || abs(q.y) > 0.94) discard;
 		vec3 tip_col = mix(v_col * 0.80, vec3(0.86, 0.82, 1.0), smoothstep(-0.2, 0.85, q.y) * 0.42);
 		dcol = tip_col * (0.74 + 0.28 * tier) * v_ao;
 	} else {
@@ -124,11 +125,12 @@ void fragment() {
 		float r = length(q);
 		// atan(0, 0) is undefined (the exact centre of the flower head).
 		float a = r > 1e-6 ? atan(q.y, q.x) : 0.0;
-		float petals = v_kind < 0.5 ? 10.0 : 5.0;
-		float shape = (v_kind < 0.5 ? 0.54 : 0.56) + (v_kind < 0.5 ? 0.46 : 0.44) * abs(cos(a * petals * 0.5));
-		if (r > shape) discard;
+		float petals = v_kind < 0.5 ? 6.0 : 5.0;
+		float lobe = abs(cos(a * petals * 0.5));
 		vec3 col = mix(v_col * 0.72, v_col * 1.12, smoothstep(0.18, 0.88, r));
-		float center = w_rstep(0.28, 0.14, r);
+		float rim_k = smoothstep(0.28, 0.78, r);
+		col *= mix(1.0, mix(0.84, 1.04, smoothstep(0.0, 0.65, lobe)), rim_k);
+		float center = w_rstep(0.32, 0.15, r);
 		col = mix(col, v_kind < 0.5 ? vec3(1.0, 0.76, 0.10) : v_kind < 1.5 ? vec3(0.84, 0.46, 0.04) : vec3(0.95, 0.78, 0.22), center);
 		dcol = col * v_ao;
 	}

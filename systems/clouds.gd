@@ -21,8 +21,10 @@ var world: RefCounted
 var mat: ShaderMaterial
 var mmi: MultiMeshInstance3D
 var painterly := true
+var billboard_on := true
 var puffs := 0
 var tris := 0
+var last_draws := 0
 var _cache := {}
 
 
@@ -32,14 +34,19 @@ func setup(w: RefCounted) -> void:
 
 func _ready() -> void:
 	painterly = Flags.style() != "classic"
+	billboard_on = Flags.value("clouds", "billboard").to_lower() != "sky"
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/clouds.gdshader")
+	# Painterly cloud billboards use discard, so keep them strictly after no-discard opaque draws.
+	mat.render_priority = 1
 	mat.set_shader_parameter("noise_tex", world.noise_tex)
 	mat.set_shader_parameter("sky_lut", world.sky_lut_tex)
 	mmi = MultiMeshInstance3D.new()
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mmi)
-	_apply_style(painterly)
+	visible = billboard_on
+	if billboard_on:
+		_apply_style(painterly)
 
 
 func _apply_style(is_painterly: bool) -> void:
@@ -48,8 +55,19 @@ func _apply_style(is_painterly: bool) -> void:
 		_cache[is_painterly] = _build_multimesh(is_painterly)
 	var entry: Dictionary = _cache[is_painterly]
 	mmi.multimesh = entry.mm
-	puffs = entry.puffs
-	tris = entry.tris
+	_sync_counts()
+
+
+func _sync_counts() -> void:
+	if visible and _cache.has(painterly):
+		var entry: Dictionary = _cache[painterly]
+		puffs = entry.puffs
+		tris = entry.tris
+		last_draws = 1
+	else:
+		puffs = 0
+		tris = 0
+		last_draws = 0
 
 
 func _build_multimesh(is_painterly: bool) -> Dictionary:
@@ -85,17 +103,28 @@ func _build_multimesh(is_painterly: bool) -> Dictionary:
 
 
 func set_on(v: bool) -> void:
+	billboard_on = v
 	visible = v
+	if v and mmi.multimesh == null:
+		_apply_style(painterly)
+	else:
+		_sync_counts()
 
 
 func is_on() -> bool:
 	return visible
 
 
+func is_billboard_on() -> bool:
+	return billboard_on
+
+
 func set_painterly(p: bool) -> void:
 	if p == painterly:
 		return
-	_apply_style(p)
+	painterly = p
+	if visible or not _cache.is_empty():
+		_apply_style(p)
 
 
 func materials() -> Array[ShaderMaterial]:

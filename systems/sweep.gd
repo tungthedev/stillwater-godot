@@ -74,6 +74,8 @@ var _base_grass := true
 var _base_grass_painted := true
 var _base_trees := true
 var _base_clouds := true
+var _base_cloud_billboard := false
+var _base_sky_clouds := true
 var _base_shadow := false
 var _prev_rebaked_grass := false
 
@@ -123,7 +125,9 @@ func start() -> void:
 	_base_grass = grass_sys.is_on()
 	_base_grass_painted = grass_sys.is_painted()
 	_base_trees = trees_sys.is_on()
-	_base_clouds = clouds_sys.is_on()
+	_base_cloud_billboard = clouds_sys.is_on()
+	_base_sky_clouds = env_sys.sky_clouds_on
+	_base_clouds = _base_cloud_billboard or _base_sky_clouds
 	_base_shadow = env_sys.sun != null and env_sys.sun.shadow_enabled
 	_build_prof_entries()
 	_poses = _pick_poses()
@@ -211,6 +215,10 @@ func _build_variants() -> void:
 		_variants.append({"id": "clouds_off", "label": "clouds off", "disjoint": true})
 	else:
 		_skipped.append("clouds_off (base clouds off)")
+	if _base_cloud_billboard:
+		_variants.append({"id": "clouds_sky", "label": "clouds sky", "disjoint": false})
+	else:
+		_variants.append({"id": "clouds_billboard", "label": "clouds bboard", "disjoint": false})
 	_variants.append({"id": "cirrus_off", "label": "cirrus off", "disjoint": false})
 	var alt_style := "classic" if _base_style == "painterly" else "painterly"
 	_variants.append({"id": "style_" + alt_style, "label": "style " + alt_style, "disjoint": false})
@@ -252,9 +260,10 @@ func _reset_to_base() -> void:
 	trees_sys.set_impostors_on(true)
 	env_sys.set_sky_flat(false)
 	env_sys.set_cirrus_on(true)
+	env_sys.set_sky_clouds_on(_base_sky_clouds)
 	if env_sys.sun != null:
 		env_sys.sun.shadow_enabled = _base_shadow
-	clouds_sys.set_on(_base_clouds)
+	clouds_sys.set_on(_base_cloud_billboard)
 	env_sys.set_style(_base_style)
 	post.set_painterly(_base_style != "classic")
 	clouds_sys.set_painterly(_base_style != "classic")
@@ -287,6 +296,8 @@ func _apply_variant(id: String) -> void:
 			terrain_sys.set_on(false)
 		"terrain_flat":
 			terrain_sys.set_flat(true)
+			if terrain_sys.flat_mat != null:
+				terrain_sys.flat_mat.render_priority = -1
 		"ground_live":
 			terrain_sys.set_live(true)
 		"ground_baked":
@@ -311,6 +322,13 @@ func _apply_variant(id: String) -> void:
 			env_sys.set_sky_flat(true)
 		"clouds_off":
 			clouds_sys.set_on(false)
+			env_sys.set_sky_clouds_on(false)
+		"clouds_billboard":
+			env_sys.set_sky_clouds_on(false)
+			clouds_sys.set_on(true)
+		"clouds_sky":
+			clouds_sys.set_on(false)
+			env_sys.set_sky_clouds_on(true)
 		"cirrus_off":
 			env_sys.set_cirrus_on(false)
 		"shadows_off":
