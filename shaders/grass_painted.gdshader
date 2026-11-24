@@ -87,7 +87,7 @@ void vertex() {
 		// tall golden field blades stay slimmer than chunky short-meadow tufts.
 		float width = 0.168 * mix(1.0, 0.46, field_k) * mix(0.76, 1.28, rnd.x)
 				* (1.0 + dist * 0.028) * far_wide * mix(0.65, 1.0, near_k)
-				* smoothstep(0.0, 0.35, scale);
+				* smoothstep(0.0, 0.24, scale);
 
 		vec2 fwd = vec2(cos(yaw), sin(yaw));
 		vec2 sd = vec2(-fwd.y, fwd.x);
@@ -159,9 +159,9 @@ void vertex() {
 			// Ground-matched base -> sunlit tip gradient; base rises smoothly toward ground tone at mid
 			// distance so the 1-of-4 surviving far blades melt into the painted ground.
 			float far_ground_k = smoothstep(10.0, 22.0, dist);
-			float base_mul = mix(mix(0.74, 0.68, field_k), 0.87, far_ground_k);
+			float base_mul = mix(mix(0.74, 0.80, field_k), 0.90, far_ground_k);
 			vec3 base_col = tone * base_mul;
-			vec3 tip_col = tone * 1.42 + mix(vec3(0.006, 0.020, 0.012), vec3(0.050, 0.040, 0.0), field_k);
+			vec3 tip_col = tone * mix(1.42, 1.36, field_k) + mix(vec3(0.006, 0.020, 0.012), vec3(0.115, 0.088, 0.005), field_k);
 			// Sunlit gust waves lift golden field tips just like the moving light in the meadow.
 			tip_col *= 1.0 + 0.16 * wave * field_k;
 			float low_sun = 1.0 - smoothstep(0.06, 0.30, sun_dir.y);

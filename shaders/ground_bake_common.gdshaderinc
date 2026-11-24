@@ -90,13 +90,11 @@ vec4 bake_ground_albedo(vec2 xz, bool is_near) {
 	if (painted_ground > 0.5) {
 		vec2 fld = w_paint_field(xz, bio);
 		if (is_near) {
-			float pv = w_paint_value_c(g_base, xz);
-			float trail_open = max(trail_raw, 0.0);
-			float field_g = fld.x * (1.0 - smoothstep(0.12, 0.36, trail_open));
-			grass = w_paint_biome_tone(h, bio, pv, field_g, fld.y, 0.22) * (0.86 + 0.08 * nd.b);
+			float pv = w_paint_value_ground_c(g_base, xz);
+			grass = w_paint_biome_tone(g_base, h, bio, pv, fld.x, fld.y, 0.24, true) * (0.94 + 0.08 * nd.b);
 		} else {
 			float pv_far = w_paint_value_far_c(g_base);
-			vec3 painted_far = w_paint_biome_tone(h, bio, pv_far, fld.x, fld.y, 0.25) * 0.90;
+			vec3 painted_far = w_paint_biome_tone(g_base, h, bio, pv_far, fld.x, fld.y, 0.25, true) * 0.98;
 			vec3 classic_far = g_base * (0.90 + 0.18 * nd.b);
 			float warm_patch = smoothstep(0.46, 0.76, W_NOISE(xz * 0.032 + 0.13).b);
 			float cool_patch = smoothstep(0.48, 0.76, W_NOISE(xz * 0.018 + 0.61).r);
