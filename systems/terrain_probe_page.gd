@@ -7,6 +7,9 @@ extends Node
 # style, or the post mode, so one phone screenshot says which suspect blacks the ground out.
 # The control rows force a NaN into the trail colour: they must read BLACK, which proves the page
 # can see the failure, and their colour is what "black" means for the other rows.
+# The first rows run with no grass system at all. The "after ... bake" rows then run the real grass
+# and flower bakes (systems/grass.gd) in the same viewport, hide the blades and render the terrain
+# again, to tell whether a bake leaves the GPU in a state that breaks the terrain.
 # Publishes window.__probe. Desktop: `godot --path . -- --probe=terrain --quit`.
 
 const Flags := preload("res://systems/flags.gd")
@@ -30,26 +33,37 @@ const CLASSIC_RAMP := 128
 const OUT_ALBEDO := 256
 const NAN_POW := 1024
 
+# Frames a fresh grass system gets to bake its rings (4 new tiles a frame per ring).
+const BAKE_FRAMES := 45
+
 # post: "dev" = what the game picks on this device, "alt" = the other mode.
+# bake: run that ring's real bakes first ("grass", "flowers" or "both"); rows before the first
+# bake row run with no grass system in the scene. Most telling rows first: a phone screenshot
+# may cut the list.
 const VARIANTS: Array[Dictionary] = [
 	{"name": "CONTROL forced NaN", "bits": NAN_POW, "control": true},
-	{"name": "CONTROL forced NaN, other post", "bits": NAN_POW, "post": "alt", "control": true},
+	{"name": "CONTROL NaN, other post", "bits": NAN_POW, "post": "alt", "control": true},
 	{"name": "default (this build)", "bits": 0},
+	{"name": "OLD trail pow(neg, 2)", "bits": LEGACY_POW},
+	{"name": "OLD trail pow, guards off", "bits": LEGACY_POW | NO_GUARD},
+	{"name": "OLD reversed smoothsteps", "bits": LEGACY_RSTEP},
+	{"name": "OLD rim pow + normalize", "bits": LEGACY_MISC},
+	{"name": "OLD all three (s1-2 math)", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC},
+	{"name": "no isnan in shader", "bits": 0, "no_isnan": true},
+	{"name": "no isnan + OLD trail pow", "bits": LEGACY_POW, "no_isnan": true},
 	{"name": "other post mode", "bits": 0, "post": "alt"},
 	{"name": "painterly off (classic)", "bits": 0, "classic": true},
+	{"name": "classic + OLD all three", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC, "classic": true},
 	{"name": "light floor off", "bits": NO_FLOOR},
 	{"name": "atmosphere bypassed", "bits": NO_ATM},
 	{"name": "classic indirect", "bits": CLASSIC_IND},
 	{"name": "classic toon ramp", "bits": CLASSIC_RAMP},
 	{"name": "NaN guards off", "bits": NO_GUARD},
-	{"name": "albedo only (no light, no fog)", "bits": OUT_ALBEDO | NO_ATM},
-	{"name": "OLD trail pow(neg, 2)", "bits": LEGACY_POW},
-	{"name": "OLD trail pow, guards off", "bits": LEGACY_POW | NO_GUARD},
-	{"name": "OLD reversed smoothsteps", "bits": LEGACY_RSTEP},
-	{"name": "OLD rim pow + normalize", "bits": LEGACY_MISC},
-	{"name": "OLD all three (= s1-2 math)", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC},
-	{"name": "no isnan in shader", "bits": 0, "no_isnan": true},
-	{"name": "no isnan + OLD trail pow", "bits": LEGACY_POW, "no_isnan": true},
+	{"name": "albedo only", "bits": OUT_ALBEDO | NO_ATM},
+	{"name": "after GRASS bake", "bits": 0, "bake": "grass"},
+	{"name": "after FLOWER bake", "bits": 0, "bake": "flowers"},
+	{"name": "after BOTH bakes", "bits": 0, "bake": "both"},
+	{"name": "after both + OLD all three", "bits": LEGACY_POW | LEGACY_RSTEP | LEGACY_MISC, "bake": "keep"},
 ]
 
 var world: RefCounted
@@ -62,6 +76,7 @@ var _terrain: Node3D
 var _shader: Shader
 var _shader_no_isnan: Shader
 var _float_targets := true
+var _grass: Node3D
 
 
 func setup(w: RefCounted, build: String) -> void:
@@ -86,7 +101,7 @@ func _build_ui() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_top", int(maxf(10.0, safe.x + 4.0)))
-	margin.add_theme_constant_override("margin_right", int(maxf(8.0, safe.y + 4.0)))
+	margin.add_theme_constant_override("margin_right", int(maxf(14.0, safe.y + 10.0)))
 	margin.add_theme_constant_override("margin_bottom", int(maxf(10.0, safe.z + 4.0)))
 	margin.add_theme_constant_override("margin_left", int(maxf(8.0, safe.w + 4.0)))
 	layer.add_child(margin)
@@ -95,9 +110,9 @@ func _build_ui() -> void:
 	margin.add_child(scroll)
 	_box = VBoxContainer.new()
 	_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_box.add_theme_constant_override("separation", 2)
+	_box.add_theme_constant_override("separation", 0)
 	scroll.add_child(_box)
-	_title_l = _line("TERRAIN PROBE  RUNNING... (%s)" % build_id, 17, Color(0.96, 0.92, 0.7))
+	_title_l = _line("TERRAIN PROBE  RUNNING... (%s)" % build_id, 15, Color(0.96, 0.92, 0.7))
 	_box.add_child(_title_l)
 
 
@@ -163,6 +178,33 @@ func _build_scene() -> void:
 	_shader_no_isnan.code = _shader.code.replace("#define W_DBG", "#define W_DBG\n#define W_NO_ISNAN")
 
 
+# Replaces the grass system with a fresh one that bakes only the named ring(s) around the camera,
+# lets it bake, then hides its blades: the bakes have run, and the readback shows bare terrain.
+func _bake(which: String) -> Dictionary:
+	if _grass != null:
+		_grass.queue_free()
+		await get_tree().process_frame
+	_grass = Node3D.new()
+	_grass.set_script(load("res://systems/grass.gd"))
+	_grass.setup(world)
+	_grass.update_grass = which != "flowers"
+	_grass.update_flowers = which != "grass"
+	_vp.add_child(_grass)
+	for m in _grass.materials():
+		_env.apply_to(m)
+	for i in BAKE_FRAMES:
+		await get_tree().process_frame
+	var baked := {"grass": 0, "flowers": 0}
+	for s in _grass.grass.slots:
+		if s.get("ready", false):
+			baked.grass += 1
+	for s in _grass.flowers.slots:
+		if s.get("ready", false):
+			baked.flowers += 1
+	_grass.set_on(false)
+	return baked
+
+
 func _set_style(classic: bool) -> void:
 	_env.painterly = not classic
 	_env.hemi_sky = _env.HEMI_SKY if classic else _env.PAINTERLY_HEMI_SKY
@@ -186,6 +228,11 @@ func _run() -> void:
 			row.note = "no float colour buffers"
 			rows.append(row)
 			continue
+		var bake := str(v.get("bake", ""))
+		if bake != "":
+			row.bake = bake
+			if bake != "keep":
+				row.baked = await _bake(bake)
 		_vp.use_hdr_2d = post
 		_env.set_post(post)
 		_set_style(row.classic)
@@ -292,7 +339,8 @@ func _render_result(r: Dictionary, rows: Array[Dictionary]) -> void:
 	var head := "ALL OK" if ok else ("%d NOT OK" % int(r.not_ok) if r.control_ok else "CONTROL NOT BLACK: probe invalid")
 	_title_l.text = "TERRAIN PROBE  %s  (%s)" % [head, r.build]
 	_title_l.add_theme_color_override("font_color", Color(0.45, 0.96, 0.55) if ok else Color(1.0, 0.45, 0.4))
-	_box.add_child(_line("OK = ground has colour. BLACK = the bug. CONTROL rows must be BLACK.", 11, Color(0.78, 0.85, 0.96)))
+	_box.add_child(_line("%s, post %s. BLACK = the bug; CONTROL rows must be BLACK. Numbers: ground r g b, %% black ground/frame." % [
+		str(r.gpu), "on" if r.post_default else "off"], 10, Color(0.78, 0.85, 0.96)))
 	for row in rows:
 		var verdict: String = row.verdict
 		var good: bool = (verdict == "BLACK") if row.control else (verdict == "OK")
@@ -300,28 +348,32 @@ func _render_result(r: Dictionary, rows: Array[Dictionary]) -> void:
 		if verdict == "N/A":
 			col = Color(0.6, 0.63, 0.68)
 		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 6)
+		h.add_theme_constant_override("separation", 5)
 		var tr := TextureRect.new()
-		tr.custom_minimum_size = Vector2(44, 33)
+		tr.custom_minimum_size = Vector2(26, 19)
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_SCALE
 		tr.texture = row.get("thumb")
 		h.add_child(tr)
-		var text := "%s  %s" % [verdict, row.name]
+		var lv := _line(verdict, 11, col)
+		lv.autowrap_mode = TextServer.AUTOWRAP_OFF
+		lv.custom_minimum_size = Vector2(42, 0)
+		h.add_child(lv)
+		var ln := _line(row.name, 11, col)
+		ln.autowrap_mode = TextServer.AUTOWRAP_OFF
+		ln.clip_text = true
+		ln.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(ln)
+		var stats := str(row.get("note", ""))
 		if row.has("ground"):
-			text += "\n   post %s  rgb %.2f %.2f %.2f  black %d%% / %d%%" % ["on" if row.post else "off",
-				row.ground[0], row.ground[1], row.ground[2], roundi(row.black_ground * 100.0), roundi(row.black_frame * 100.0)]
-		else:
-			text += "\n   post %s  %s" % ["on" if row.post else "off", str(row.get("note", ""))]
-		var l := _line(text, 12, col)
-		l.autowrap_mode = TextServer.AUTOWRAP_OFF
-		l.add_theme_constant_override("line_spacing", -2)
-		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		h.add_child(l)
+			stats = "%02d %02d %02d  %d/%d" % [mini(99, roundi(row.ground[0] * 100.0)), mini(99, roundi(row.ground[1] * 100.0)),
+				mini(99, roundi(row.ground[2] * 100.0)), roundi(row.black_ground * 100.0), roundi(row.black_frame * 100.0)]
+		var ls := _line(stats, 10, col)
+		ls.autowrap_mode = TextServer.AUTOWRAP_OFF
+		h.add_child(ls)
 		_box.add_child(h)
 	var gl: Dictionary = r.gl
-	_box.add_child(_line("black %% = ground / whole frame.  GL: float_lin=%s col_f=%s col_h=%s vtx_tex=%s dpr=%s" % [
+	_box.add_child(_line("GL: float_lin=%s col_f=%s col_h=%s vtx_tex=%s dpr=%s" % [
 		str(gl.get("float_linear", "?")), str(gl.get("color_float", "?")), str(gl.get("color_half", "?")),
-		str(gl.get("vtx_tex_units", "?")), str(r.dpr)], 11, Color(0.78, 0.85, 0.96)))
-	_box.add_child(_line("GPU: %s" % str(r.gpu), 11, Color(0.88, 0.9, 0.94)))
+		str(gl.get("vtx_tex_units", "?")), str(r.dpr)], 10, Color(0.78, 0.85, 0.96)))
 	_box.add_child(_line("UA: %s" % str(r.ua), 10, Color(0.68, 0.72, 0.78)))

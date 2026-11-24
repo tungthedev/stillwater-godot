@@ -48,8 +48,10 @@ M (music). The clock stays at 16:00.
   only) offscreen once per variant and shows OK / BLACK per row with the ground colour, plus
   `window.__probe`: default, the other post mode, classic style, light floor off, atmosphere
   bypassed, classic indirect, classic toon ramp, NaN guards off, albedo only, each old
-  undefined-behaviour construct switched back on, and the shader compiled without `isnan()`. The
-  two CONTROL rows force a NaN and must read BLACK. Desktop:
+  undefined-behaviour construct switched back on, and the shader compiled without `isnan()`. Those
+  rows run with no grass system; the last rows first run the real grass bake, the flower bake, or
+  both, hide the blades and render the terrain again. The two CONTROL rows force a NaN and must
+  read BLACK. Desktop:
   `xvfb-run -a godot --path . -- --probe=terrain --quit` prints `TERRAIN_PROBE PASS`.
 - `?dbg_terrain=<bits>`: the same switches in the real game (bit values at the top of
   `shaders/stillwater.gdshaderinc`), e.g. `?dbg_terrain=1024` reproduces the iPhone black ground on

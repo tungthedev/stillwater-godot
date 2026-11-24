@@ -48,6 +48,9 @@ var world: RefCounted
 var grass: Ring
 var flowers: Ring
 var _on := true
+# ?probe=terrain turns one ring's updates (and so its bakes) off to test each bake on its own.
+var update_grass := true
+var update_flowers := true
 var _frame := 0
 var last_tris := 0
 var last_draws := 0
@@ -130,8 +133,10 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	grass.draw_mat.set_shader_parameter("cam_xz", cxz)
 	grass.draw_mat.set_shader_parameter("player_xz", cxz)
 	flowers.draw_mat.set_shader_parameter("cam_xz", cxz)
-	grass.update(p, planes, _frame, assume_baked)
-	flowers.update(p, planes, _frame, assume_baked)
+	if update_grass:
+		grass.update(p, planes, _frame, assume_baked)
+	if update_flowers:
+		flowers.update(p, planes, _frame, assume_baked)
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
 	push_us = grass.push_us + flowers.push_us
