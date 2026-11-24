@@ -182,7 +182,8 @@ static func vsync_locked(iv: Array) -> bool:
 # work cannot fit one 16.7 ms vsync), against the interval that followed. At 90% or more of it the
 # CPU explains the frame; at 70% or less the rest of the frame went to waiting on the GPU (inside a
 # WebGL call or before the next rAF). The stage verdict is the side that holds at least 60% of
-# the frames, else "mixed".
+# the frames, else "mixed". A paced frame that takes one vsync is capped by the display ("60 Hz
+# cap"), whatever the work.
 static func analyze(js: Dictionary) -> Dictionary:
 	var cpu: Array = js.get("cpu", [])
 	var iv: Array = js.get("iv", [])
@@ -197,9 +198,13 @@ static func analyze(js: Dictionary) -> Dictionary:
 	var work: Array[float] = []
 	var n_cpu := 0
 	var n_gpu := 0
+	var n_cap := 0
 	for i in cpu.size():
 		var w := maxf(0.0, float(cpu[i]) - float(wait[i]))
 		work.append(w)
+		if locked and float(iv[i]) < 1.5 * VSYNC_MS:
+			n_cap += 1
+			continue
 		var need := w
 		if locked:
 			need = maxf(1.0, ceilf(w / VSYNC_MS - 0.05)) * VSYNC_MS
@@ -233,8 +238,11 @@ static func analyze(js: Dictionary) -> Dictionary:
 		wait_by[k] = snappedf(float(by[k]) / n, 0.01)
 	out["wait_by"] = wait_by
 	var bound := "mixed"
-	var share := 1.0 - float(n_cpu + n_gpu) / n
-	if n_cpu >= 0.6 * n:
+	var share := 1.0 - float(n_cpu + n_gpu + n_cap) / n
+	if n_cap >= 0.6 * n:
+		bound = "60 Hz cap"
+		share = float(n_cap) / n
+	elif n_cpu >= 0.6 * n:
 		bound = "CPU-bound"
 		share = float(n_cpu) / n
 	elif n_gpu >= 0.6 * n:
