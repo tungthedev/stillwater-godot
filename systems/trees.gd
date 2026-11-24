@@ -365,6 +365,14 @@ func _build_hero_oaks(spots: Array) -> void:
 		var basis := Basis(Vector3.UP, float(t.rot)).scaled(Vector3(s * 0.94, s, s * 0.94))
 		mm.set_instance_transform(j, Transform3D(basis, Vector3(t.x, t.y, t.z)))
 		mm.set_instance_custom_data(j, Color(t.tint[0], t.tint[1], t.tint[2], 0.0))
+	# An explicit box, so the drawn-count test works without a GPU (headless budget test).
+	var box := AABB()
+	for j in spots.size():
+		var t: Dictionary = spots[j]
+		var s := float(t.s)
+		var b := AABB(Vector3(t.x - s * 0.6 - SWAY_PAD, t.y - SWAY_PAD, t.z - s * 0.6 - SWAY_PAD), Vector3(s * 1.2 + SWAY_PAD * 2.0, s * 1.15 + SWAY_PAD * 2.0, s * 1.2 + SWAY_PAD * 2.0))
+		box = b if j == 0 else box.merge(b)
+	mm.custom_aabb = box
 	hero_oaks = MultiMeshInstance3D.new()
 	hero_oaks.multimesh = mm
 	hero_oaks.material_override = hero_mat
