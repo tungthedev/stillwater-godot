@@ -4,9 +4,11 @@
 // (field f of blade b sits at x = f * slot_w + b % slot_w, y = b / slot_w inside its slot).
 // tests/bake_probe.gd checks that canvas FRAGCOORD rows are texelFetch rows and the bytes are exact.
 //
-// slot_tex row 0 holds one texel per slot: (tile origin x, z, flags, base height); flags bit 0/1
-// mirror x/z, bit 2 = bake now. Slots without bit 2 are discarded so their texels stay as baked.
-// scatter_tex is the layout's fixed scatter: row 0 = local x, z; row 1 = four randoms, per rank.
+// slot_tex (RGBA8, capacity x 2):
+//   row 0 = tile indices (tx + 32768, tz + 32768) as 16-bit LE pairs
+//   row 1 = (flags, base_q lo, mid, hi), where base_h = base_q / 1024 - 1024;
+//   flags bit 0/1 mirror x/z, bit 2 = bake now. Slots without bit 2 discard so prior bakes stay.
+// scatter_tex (RGBA8, near x 3): 16-bit LE pairs for local (x, z), rnd (x, y), rnd (z, w).
 
 #define W_NOISE(uv) textureLod(noise_tex, uv, 0.0)
 
@@ -31,27 +33,36 @@ struct VegTexel {
 	float base_h;
 };
 
+vec2 veg_u16_pair(vec4 texel) {
+	vec4 b = floor(texel * 255.0 + 0.5);
+	return vec2(b.x + b.y * 256.0, b.z + b.w * 256.0);
+}
+
 // False when this texel's slot is not being baked (the caller discards).
 bool veg_texel(vec2 frag, out VegTexel t) {
 	ivec2 p = ivec2(frag);
 	int sw = slot_w * fields;
 	int col = p.x / sw;
 	int row = p.y / slot_h;
-	vec4 st = texelFetch(slot_tex, ivec2(row * slot_cols + col, 0), 0);
-	int flags = int(st.z + 0.5);
+	int slot_idx = row * slot_cols + col;
+	vec4 s1 = floor(texelFetch(slot_tex, ivec2(slot_idx, 1), 0) * 255.0 + 0.5);
+	int flags = int(s1.x);
 	if ((flags & 4) == 0) {
 		return false;
 	}
+	vec2 tile_ij = veg_u16_pair(texelFetch(slot_tex, ivec2(slot_idx, 0), 0)) - 32768.0;
 	int lx = p.x - col * sw;
 	t.field = lx / slot_w;
 	t.rank = (p.y - row * slot_h) * slot_w + (lx - t.field * slot_w);
-	vec4 sc = texelFetch(scatter_tex, ivec2(t.rank, 0), 0);
-	t.rnd = texelFetch(scatter_tex, ivec2(t.rank, 1), 0);
-	vec2 local = sc.xy;
+	vec2 local = veg_u16_pair(texelFetch(scatter_tex, ivec2(t.rank, 0), 0)) / 65535.0 * tile_size;
+	t.rnd = vec4(
+		veg_u16_pair(texelFetch(scatter_tex, ivec2(t.rank, 1), 0)),
+		veg_u16_pair(texelFetch(scatter_tex, ivec2(t.rank, 2), 0))
+	) / 65535.0;
 	if ((flags & 1) != 0) local.x = tile_size - local.x;
 	if ((flags & 2) != 0) local.y = tile_size - local.y;
-	t.xz = st.xy + local;
-	t.base_h = st.w;
+	t.xz = tile_ij * tile_size + local;
+	t.base_h = (s1.y + s1.z * 256.0 + s1.w * 65536.0) / 1024.0 - 1024.0;
 	return true;
 }
 

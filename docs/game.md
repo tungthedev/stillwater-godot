@@ -40,6 +40,12 @@ M (music). The clock stays at 16:00.
   `tools/free_walk_check.mjs`.
 - `?spawn=x,z,yaw`: start the walk somewhere else (check legs).
 - `?debug`: show the perf readout and levers at load.
+- `?probe=bake`: on-device self-test for the grass bake pipeline (RGBA8 SubViewport round trip,
+  partial `CLEAR_MODE_NEVER` update, 3D vertex-shader `texelFetch`, and a real trailhead grass tile
+  baked and read back against CPU heights/normals/tallness/alpha); shows a phone-readable PASS/FAIL
+  panel and writes `window.__probe`.
+- `?grassdbg=1`: shades grass blades black (0) to white (max) by decoded tallness while leaving the
+  ground normal, to verify on-device whether blade tallness decodes as non-zero.
 
 ## Checks
 
@@ -50,9 +56,12 @@ M (music). The clock stays at 16:00.
   single frame between 5 and 10 ms only warns, which is looser than a flat 5 ms limit; it measures
   script time only, not GPU upload or bake gaps.
 - `BASE=... gpu-run node tools/game_ui_check.mjs --build w1-1`: touch on the phone view: pause holds
-  the walker still, two thumbs walk and look at once (lifting one keeps the other), Perf on the
-  pause sheet shows the levers and runs Bench from the game, `?debug` shows them at load, and the
-  HUD stays inside injected iPhone safe-area insets (portrait at load, landscape on a resize).
-  Control rects and state come from `window.__ui` (`?walklog`).
+  the walker still, single-touch and second-finger taps on HUD buttons (Sit/Stand, Trail, Pause)
+  while the stick thumb is held fire once without double-firing or turning into look input, stick
+  recovery reclaims an orphaned touch without `touchEnd`, clears cleanly on `touchCancel`, and keeps
+  the stick ring visible on a quick release + re-touch, two thumbs walk and look at once (lifting
+  one keeps the other), Perf on the pause sheet shows the levers and runs Bench from the game,
+  `?debug` shows them at load, and the HUD stays inside injected iPhone safe-area insets (portrait
+  at load, landscape on a resize). Control rects and state come from `window.__ui` (`?walklog`).
 - `GODOT=... STILLWATER=... gpu-run node tools/game_shots.mjs`: title, place card, walking and pause
   at the same moments in both games, phone portrait, phone landscape and desktop.

@@ -106,7 +106,10 @@ func _publish_ui(delta: float) -> void:
 	var h: CanvasLayer = session.hud
 	var s := {
 		"mode": session.mode, "paused": session.paused, "fade": snappedf(session.fade, 0.01),
-		"distance": snappedf(player.distance, 0.01), "yaw": snappedf(player.yaw, 0.001), "auto_walk": player.auto_walk,
+		"distance": snappedf(player.distance, 0.01), "yaw": snappedf(player.yaw, 0.001),
+		"auto_walk": player.auto_walk, "sitting": not player.sitting.is_empty(), "sit_text": h.btn.sit.text,
+		"stick_active": session.input.has_stick(), "stick_alpha": snappedf(h.stick.modulate.a, 0.01),
+		"stick_pos": [snappedf(h.stick.position.x, 0.5), snappedf(h.stick.position.y, 0.5)],
 		"dev_on": ui.dev_on, "dev_grid": ui.grid.is_visible_in_tree(), "bench_running": ui.bench_sys.running,
 		"bench_done": ui.panel.visible, "grass_on": ui.grass_sys.is_on(), "hud_visible": h.visible,
 		"safe": [h.safe.x, h.safe.y, h.safe.z, h.safe.w],

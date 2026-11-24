@@ -30,6 +30,7 @@ uniform float lod_start = 10.0;
 uniform float lod_end = 16.0;
 uniform float far_width_scale = 1.32;
 uniform float wind_strength = 0.5;
+uniform float dbg_tallness = 0.0;
 
 const float TALL_MAX = 2.2;
 const float H_SPAN = 64.0;
@@ -40,6 +41,7 @@ varying float v_wave;
 varying float v_forest;
 varying vec3 v_col;
 varying vec3 v_n;
+varying float v_tall_dbg;
 
 vec4 atlas_bytes(ivec2 p) {
 	return floor(texelFetch(atlas, p, 0) * 255.0 + 0.5);
@@ -76,6 +78,7 @@ void vertex() {
 		v_forest = 0.0;
 		v_col = vec3(0.0);
 		v_n = vec3(0.0, 1.0, 0.0);
+		v_tall_dbg = 0.0;
 	} else {
 		vec4 b1 = atlas_bytes(px + ivec2(slot_w, 0));
 		float nx = b1.x / 255.0 * 2.0 - 1.0;
@@ -83,6 +86,7 @@ void vertex() {
 		vec3 tn = vec3(nx, sqrt(max(0.0, 1.0 - nx * nx - nz * nz)), nz);
 		float tall_static = b1.z / 255.0 * TALL_MAX;
 		float yaw = b1.w / 255.0 * 6.2831853;
+		v_tall_dbg = clamp(tall_static / TALL_MAX, 0.0, 1.0);
 
 		float is_short_under = step(rnd.x, 0.38) * (1.0 - smoothstep(22.0, 38.0, dist));
 		float tall = mix(tall_static, 0.14 + 0.15 * rnd.y, is_short_under * 0.80 * (1.0 - reed));
@@ -136,28 +140,34 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 cam = CAMERA_POSITION_WORLD;
-	float cam_d = length(v_wpos - cam);
-	vec3 dcol = v_col * mix(0.84, 1.0, smoothstep(0.0, 0.45, v_y));
-	vec3 n = normalize(v_n);
-	float sun_vis = w_cloud_shadow(v_wpos, cam);
-	float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.18, 0.62, cam_d);
-	vec3 direct = ramp * light_col * sun_vis * dcol / PI;
-	vec3 ind = w_indirect(n, dcol);
+	if (dbg_tallness > 0.5) {
+		// ?grassdbg=1: shade blades black (0) to white (TALL_MAX) by decoded tallness; ground stays normal.
+		vec3 g = vec3(v_tall_dbg);
+		ALBEDO = post_on > 0.5 ? godot_out(g * 4.0) : godot_out(g);
+	} else {
+		vec3 cam = CAMERA_POSITION_WORLD;
+		float cam_d = length(v_wpos - cam);
+		vec3 dcol = v_col * mix(0.84, 1.0, smoothstep(0.0, 0.45, v_y));
+		vec3 n = normalize(v_n);
+		float sun_vis = w_cloud_shadow(v_wpos, cam);
+		float ramp = w_toon_ramp(dot(n, sun_dir), 0.35, 0.18, 0.62, cam_d);
+		vec3 direct = ramp * light_col * sun_vis * dcol / PI;
+		vec3 ind = w_indirect(n, dcol);
 
-	vec3 emis = vec3(0.0);
-	{
-		vec3 Vw = normalize(v_wpos - cam);
-		float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
-		float lit_k = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
-		float back_k = painterly > 0.5 ? 0.45 : 0.75;
-		emis += v_col * light_col * vec3(1.0, 1.0, 0.90) * (back * back_k + 0.03 + v_wave * 0.05) * v_y * lit_k;
-		emis += v_col * vec3(0.9, 1.0, 0.6) * v_forest * 0.04 * length(light_col);
+		vec3 emis = vec3(0.0);
+		{
+			vec3 Vw = normalize(v_wpos - cam);
+			float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
+			float lit_k = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
+			float back_k = painterly > 0.5 ? 0.45 : 0.75;
+			emis += v_col * light_col * vec3(1.0, 1.0, 0.90) * (back * back_k + 0.03 + v_wave * 0.05) * v_y * lit_k;
+			emis += v_col * vec3(0.9, 1.0, 0.6) * v_forest * 0.04 * length(light_col);
+		}
+
+		vec3 lit = w_light_floor(direct + ind + emis, dcol);
+		vec3 atm_mul;
+		vec3 atm_add;
+		w_atmosphere(v_wpos, cam, atm_mul, atm_add);
+		ALBEDO = w_grade(lit * atm_mul + atm_add, SCREEN_UV, VIEWPORT_SIZE);
 	}
-
-	vec3 lit = w_light_floor(direct + ind + emis, dcol);
-	vec3 atm_mul;
-	vec3 atm_add;
-	w_atmosphere(v_wpos, cam, atm_mul, atm_add);
-	ALBEDO = w_grade(lit * atm_mul + atm_add, SCREEN_UV, VIEWPORT_SIZE);
 }

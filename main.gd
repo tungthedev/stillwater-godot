@@ -19,6 +19,14 @@ func _ready() -> void:
 		_fatal("world data failed to load (see log)")
 		return
 	var t_load := Time.get_ticks_msec() - t0
+	if Flags.value("probe") == "bake":
+		var probe := Node.new()
+		probe.name = "bake_probe"
+		probe.set_script(load("res://systems/bake_probe_page.gd"))
+		probe.setup(world, BUILD)
+		add_child(probe)
+		print("BUILD %s probe=bake load_ms=%d renderer=%s" % [BUILD, t_load, Flags.gpu_name()])
+		return
 	var env_sys := Node3D.new()
 	env_sys.name = "environment"
 	env_sys.set_script(load("res://systems/environment.gd"))
@@ -98,6 +106,7 @@ func _add_game(world: RefCounted, scene: SubViewport, cam: Camera3D, bench_sys: 
 	hud.name = "hud"
 	hud.set_script(load("res://systems/hud.gd"))
 	hud.visible = not (Flags.has("noui") or Flags.has("no-ui"))
+	hud.blockers = [ui.grid, ui.panel]
 	add_child(hud)
 	var session := Node.new()
 	session.name = "session"

@@ -20,6 +20,7 @@ extends Node3D
 
 const VegScatter := preload("res://world/veg_scatter.gd")
 const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
+const Flags := preload("res://systems/flags.gd")
 
 # quality.js low: grassRadius 30, grassNear 1664, grassFar 1024, grassNearLod 16,
 # grassFarWidthScale 1.32, flowers 576 (flower radius min(34, 0.75 * grassRadius)).
@@ -69,6 +70,9 @@ func _ready() -> void:
 	grass.draw_mat.set_shader_parameter("lod_end", GRASS.near_lod)
 	grass.draw_mat.set_shader_parameter("far_count", float(GRASS.far))
 	grass.draw_mat.set_shader_parameter("far_width_scale", GRASS.far_width)
+	var gdbg := Flags.value("grassdbg")
+	if gdbg == "1" or (Flags.has("grassdbg") and gdbg != "0"):
+		grass.draw_mat.set_shader_parameter("dbg_tallness", 1.0)
 	var fm := _flower_mesh()
 	flowers = Ring.new(self, FLOWERS, "res://shaders/flower_bake.gdshader", "res://shaders/flower.gdshader", [fm, fm])
 	print("GRASS built in %d ms: grass atlas %s, flower atlas %s" % [Time.get_ticks_msec() - t0, grass.vp.size, flowers.vp.size])
@@ -220,6 +224,7 @@ class Ring:
 	var slot_h := 0
 	var slots: Array[Dictionary] = []
 	var by_key := {}
+	var slot_bytes := PackedByteArray()
 	var slot_img: Image
 	var slot_tex: ImageTexture
 	var slot_dirty_tex := false
@@ -253,17 +258,29 @@ class Ring:
 		_atlas_grid(1.3)
 		slot_h = int(ceil(float(cfg.near) / cfg.slot_w))
 		var sc: Dictionary = VegScatter.generate(cfg.max_count, tile, cfg.seed)
-		var simg := Image.create(cfg.near, 2, false, Image.FORMAT_RGBAF)
-		var local: PackedFloat32Array = sc.local
-		var rnd: PackedFloat32Array = sc.rnd
-		for i in int(cfg.near):
-			simg.set_pixel(i, 0, Color(local[i * 2], local[i * 2 + 1], 0.0, 0.0))
-			simg.set_pixel(i, 1, Color(rnd[i * 4], rnd[i * 4 + 1], rnd[i * 4 + 2], rnd[i * 4 + 3]))
-		slot_img = Image.create(capacity, 1, false, Image.FORMAT_RGBAF)
+		# Pack scatter and slot tables into RGBA8 bytes rather than RGBAF: WebGL2 without
+		# OES_texture_float_linear (iPhone Safari) downgrades RGBAF to RGBAHalf on creation,
+		# causing ImageTexture.update(slot_img) to fail with a format mismatch and leaving
+		# every grass and flower bake pass discarded.
+		var n_near := int(cfg.near)
+		var sbytes := PackedByteArray()
+		sbytes.resize(n_near * 3 * 4)
+		var packed: PackedInt64Array = sc.packed
+		for i in n_near:
+			for row_i in 3:
+				var w: int = packed[i * 4 + row_i]
+				var o := (row_i * n_near + i) * 4
+				sbytes[o] = w & 255
+				sbytes[o + 1] = (w >> 8) & 255
+				sbytes[o + 2] = (w >> 16) & 255
+				sbytes[o + 3] = (w >> 24) & 255
+		var simg := Image.create_from_data(n_near, 3, false, Image.FORMAT_RGBA8, sbytes)
+		slot_bytes.resize(capacity * 2 * 4)
+		slot_img = Image.create_from_data(capacity, 2, false, Image.FORMAT_RGBA8, slot_bytes)
 		slot_tex = ImageTexture.create_from_image(slot_img)
 		for s in capacity:
 			slots.append({"i": s, "key": null, "sx": (s % cols) * int(cfg.slot_w) * int(cfg.fields), "sy": (s / cols) * slot_h,
-				"ox": 0.0, "oz": 0.0, "flips": 0, "base": 0.0, "box": AABB(), "empty": false,
+				"tx": 0, "tz": 0, "ox": 0.0, "oz": 0.0, "flips": 0, "base": 0.0, "base_q": 0, "box": AABB(), "empty": false,
 				"baking": false, "bake_frame": 0, "ready": false})
 
 		vp = SubViewport.new()
@@ -376,6 +393,7 @@ class Ring:
 			vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		var tu := Time.get_ticks_usec()
 		if slot_dirty_tex:
+			slot_img.set_data(capacity, 2, false, Image.FORMAT_RGBA8, slot_bytes)
 			slot_tex.update(slot_img)
 			slot_dirty_tex = false
 		var slot_us := Time.get_ticks_usec() - tu
@@ -463,6 +481,8 @@ class Ring:
 		var tz: int = t.tz
 		var f := VegScatter.flip_bits(tx, tz)
 		s.key = t.key
+		s.tx = tx
+		s.tz = tz
 		s.ox = tx * tile
 		s.oz = tz * tile
 		s.flips = f.x | (f.y << 1)
@@ -474,7 +494,10 @@ class Ring:
 				var y: float = world.height(s.ox + ix * tile * 0.25, s.oz + iz * tile * 0.25)
 				lo = minf(lo, y)
 				hi = maxf(hi, y)
-		s.base = lo - BASE_DROP
+		# Quantise base height to 1/1024 m (~1 mm) so CPU MODEL_MATRIX[3].y and GPU RGBA8 slot_tex match bit-exact.
+		var base_q := clampi(roundi((lo - BASE_DROP + 1024.0) * 1024.0), 0, 16777215)
+		s.base_q = base_q
+		s.base = float(base_q) / 1024.0 - 1024.0
 		s.box = AABB(Vector3(s.ox - cfg.pad_xz, lo - cfg.pad_down, s.oz - cfg.pad_xz),
 			Vector3(tile + 2.0 * cfg.pad_xz, hi - lo + cfg.pad_down + cfg.pad_up, tile + 2.0 * cfg.pad_xz))
 		s.empty = hi < world.water_level + cfg.empty_below
@@ -486,7 +509,19 @@ class Ring:
 	func _write_slot(s: Dictionary) -> void:
 		var i: int = s.i
 		var flags: int = s.flips | (4 if s.baking else 0)
-		slot_img.set_pixel(i, 0, Color(s.ox, s.oz, float(flags), s.base))
+		var txu := clampi(int(s.tx) + 32768, 0, 65535)
+		var tzu := clampi(int(s.tz) + 32768, 0, 65535)
+		var o0 := i * 4
+		slot_bytes[o0] = txu & 255
+		slot_bytes[o0 + 1] = (txu >> 8) & 255
+		slot_bytes[o0 + 2] = tzu & 255
+		slot_bytes[o0 + 3] = (tzu >> 8) & 255
+		var bq: int = s.base_q
+		var o1 := (capacity + i) * 4
+		slot_bytes[o1] = flags & 255
+		slot_bytes[o1 + 1] = bq & 255
+		slot_bytes[o1 + 2] = (bq >> 8) & 255
+		slot_bytes[o1 + 3] = (bq >> 16) & 255
 		slot_dirty_tex = true
 
 	# Frustum planes point outward: a box is out when its corner deepest along a plane's normal
