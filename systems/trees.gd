@@ -37,6 +37,14 @@ var ps := PackedFloat32Array()
 var prot := PackedFloat32Array()
 var psx := PackedFloat32Array()
 var ptint := PackedByteArray()
+var prank := PackedInt32Array()
+# Density lever: draw trees with rank < density * the tier's fraction, as Stillwater's tiers select.
+var density := 1.0
+var rank_limit := 1 << 20
+var tier_trees := 0.55
+var base_hero_r := 12.0
+var base_mid_r := 100.0
+var base_bush_r := 120.0
 var pkind := PackedByteArray()
 var tint_max := 2.0
 
@@ -88,6 +96,10 @@ func _ready() -> void:
 	hero_r = float(tier.treeHeroR)
 	mid_r = float(tier.treeMidR)
 	bush_r = float(tier.get("treeBushR", mid_r))
+	base_hero_r = hero_r
+	base_mid_r = mid_r
+	base_bush_r = bush_r
+	tier_trees = float(tier.trees)
 	_decode(tm)
 	_load_assets()
 	hero_grid = _grid(HERO_CELL, false)
@@ -114,6 +126,7 @@ func _decode(_tm: Dictionary) -> void:
 	ptint = t.tint
 	pkind = t.kind
 	tint_max = t.tint_max
+	prank = t.rank
 
 
 func _load_assets() -> void:
@@ -283,7 +296,18 @@ func _write_instance(buf: PackedFloat32Array, o: int, i: int, extra: float) -> v
 	buf[o + 15] = extra
 
 
+func _kept(idx: PackedInt32Array) -> PackedInt32Array:
+	if density >= 1.0 or prank.is_empty():
+		return idx
+	var out := PackedInt32Array()
+	for i in idx:
+		if prank[i] < rank_limit:
+			out.append(i)
+	return out
+
+
 func _multimesh(mesh: Mesh, idx: PackedInt32Array, extra_of_kind: bool) -> MultiMesh:
+	idx = _kept(idx)
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_custom_data = true
@@ -338,6 +362,9 @@ func _build_far() -> void:
 			idx.append_array(by_kind[v])
 		var ix := c % int(g.w) + int(g.ix0)
 		var iz := c / int(g.w) + int(g.iz0)
+		idx = _kept(idx)
+		if idx.is_empty():
+			continue
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = _multimesh(quad, idx, true)
 		mmi.multimesh.custom_aabb = _cell_aabb(idx, (ix + 0.5) * FAR_CELL, (iz + 0.5) * FAR_CELL, FAR_CELL)
@@ -384,10 +411,12 @@ func _make_batch(g: Dictionary, key: Vector2i, hero: bool) -> Dictionary:
 	var size: float = g.size
 	var c := (key.y - int(g.iz0)) * int(g.w) + key.x - int(g.ix0)
 	var start: PackedInt32Array = g.start
-	var idx: PackedInt32Array = (g.order as PackedInt32Array).slice(start[c], start[c + 1])
+	var idx: PackedInt32Array = _kept((g.order as PackedInt32Array).slice(start[c], start[c + 1]))
 	var cx := (key.x + 0.5) * size
 	var cz := (key.y + 0.5) * size
 	var batch := {"nodes": [], "cx": cx, "cz": cz, "size": size, "count": idx.size(), "bushes": 0, "on": false, "bush_on": true}
+	if idx.is_empty():
+		return batch
 	var aabb := _cell_aabb(idx, cx, cz, size)
 	for v in KINDS.size():
 		var sub := PackedInt32Array()
@@ -488,6 +517,30 @@ func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	stats.mid = m.x - h.x
 	stats.near_cells = mid_want.size()
 	stats.impostor = far_total - m.y
+
+
+# Density (fraction of this tier's trees) and draw distance (scale of the hero / mid / bush radii):
+# both rebuild the batches, which takes a moment, as a tier switch does in Stillwater.
+func set_levers(dens: float, dist: float) -> void:
+	if is_equal_approx(dens, density) and is_equal_approx(base_hero_r * dist, hero_r):
+		return
+	density = dens
+	rank_limit = int(floor(tier_trees * dens * 65536.0)) if dens < 1.0 else 1 << 20
+	hero_r = base_hero_r * dist
+	mid_r = base_mid_r * dist
+	bush_r = base_bush_r * dist
+	for child in get_children():
+		if child != hero_oaks:
+			child.queue_free()
+			remove_child(child)
+	hero_batches.clear()
+	mid_batches.clear()
+	hero_active.clear()
+	mid_active.clear()
+	far_nodes.clear()
+	far_total = 0
+	_build_far()
+	lod_center = Vector3(1e9, 0.0, 1e9)
 
 
 func set_on(v: bool) -> void:

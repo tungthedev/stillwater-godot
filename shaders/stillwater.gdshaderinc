@@ -14,6 +14,8 @@ uniform vec3 sun_dir = vec3(-0.8282, 0.5425, 0.1409);
 uniform vec3 sun_col = vec3(0.9004, 0.6768, 0.4306);
 uniform vec3 light_col = vec3(6.682, 5.161, 3.476);
 uniform float exposure = 0.6;
+// 1: the post chain grades (systems/post.gd), so objects write scene-linear HDR; 0: graded here.
+uniform float post_on = 0.0;
 // Stillwater's grade at hour 16 (env.js grade, post.js vignette). Constants rather than uniforms:
 // Godot leaves sky-shader uniform defaults unset (zero) in this renderer.
 const vec3 shadow_tint = vec3(0.90, 0.95, 1.14);
@@ -66,9 +68,26 @@ vec3 to_srgb(vec3 c) {
 	return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
 }
 
+// The Compatibility renderer passes every 3D colour output through
+// linear_to_srgb(srgb_to_linear(c)) with two different approximations (a cubic one way, a
+// pow(1 / 2.4) without the linear toe the other), which crushes values under ~0.02 and lifts
+// bright HDR. This undoes that, so the render target holds exactly v: solve the cubic for the
+// value whose round trip is v (three Newton steps from a power-law guess).
+vec3 godot_out(vec3 v) {
+	vec3 p = pow((max(v, vec3(0.0)) + 0.055) / 1.055, vec3(2.4));
+	vec3 x = mix(pow(p, vec3(0.4545)), pow(p / 0.305306011, vec3(0.33333)), step(1.0, p));
+	for (int i = 0; i < 3; i++) {
+		vec3 f = x * (x * (x * 0.305306011 + 0.682171111) + 0.012522878) - p;
+		vec3 d = x * (x * 0.915918033 + 1.364342222) + 0.012522878;
+		x -= f / d;
+	}
+	return x;
+}
+
 // Stillwater's post chain after bloom: exposure, stylTone, daytime green freshness, split toning,
-// saturation / lift / contrast, vignette. Bloom, FXAA, chromatic aberration and grain are not ported.
-vec3 w_grade(vec3 col, vec2 screen_uv, vec2 viewport) {
+// saturation / lift / contrast, vignette, sRGB encode. With post_on the composite pass does this
+// (plus bloom, FXAA, sharpen and grain) on the full-resolution screen, as Stillwater does.
+vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
 	col = styl_tone(col * exposure);
 	{
 		float mx = max(col.r, max(col.g, col.b));
@@ -89,4 +108,11 @@ vec3 w_grade(vec3 col, vec2 screen_uv, vec2 viewport) {
 	vec2 vv = (screen_uv - 0.5) * vec2(viewport.x / viewport.y, 1.0);
 	col *= clamp(1.0 - dot(vv, vv) * vignette, 0.0, 1.0);
 	return to_srgb(col);
+}
+
+vec3 w_grade(vec3 col, vec2 screen_uv, vec2 viewport) {
+	if (post_on > 0.5) {
+		return godot_out(min(col, vec3(200.0)));
+	}
+	return godot_out(w_grade_ldr(col, screen_uv, viewport));
 }

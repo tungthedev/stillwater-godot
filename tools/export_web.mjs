@@ -176,6 +176,9 @@ for (const i of keep) put16(Math.round((field(5, i) - SX_MIN) * 65535));
 for (const i of keep) for (let c = 0; c < 3; c++) treeBuf[o++] = Math.round(Math.min(field(6 + c, i), TINT_MAX) / TINT_MAX * 255);
 for (const i of keep) treeBuf[o++] = kinds[i];
 if (o !== treeBuf.length) throw new Error('tree pack size');
+// Ranks of the kept trees, so a density lever can draw any rank prefix as Stillwater's tiers do.
+const rankOut = Buffer.alloc(m * 2);
+keep.forEach((i, j) => rankOut.writeUInt16LE(rank[i], j * 2));
 const extras = JSON.parse(fs.readFileSync(path.join(SRC, 'extras.json'), 'utf8'));
 const heroOaks = extras.heroOaks.map((t) => ({ ...t, y: renderHeight(t.x, t.z) - 0.35 }));
 console.log(`trees: ${m} (${TIER} tier), ${bandTrees} in the near/far blend band, where y moves by up to ${maxGroundShift.toFixed(2)} m from the game's near-only y`);
@@ -190,6 +193,7 @@ put('far.pngdata', encodePng(fRes, fRes, 3, farPx));
 put('biome.pngdata', encodePng(meta.biome.res, meta.biome.res, 3, biomeRgb));
 put('noise.pngdata', encodePng(NOISE_RES, NOISE_RES, 4, noisePx));
 put('trees.bin', treeBuf);
+put('trees_rank.bin', rankOut);
 const webMeta = {
   format: 1,
   worldHash: meta.worldHash,
@@ -205,6 +209,7 @@ const webMeta = {
   waterLevel: meta.waterLevel,
   trees: {
     file: 'trees.bin', count: m, tier: TIER, tierValues: tier, worldHash: meta.worldHash,
+    rankFile: 'trees_rank.bin', rankRule: 'u16 per tree in trees.bin order; Stillwater draws rank < density * 65536',
     subset: 'canonical trees with rank < tier density, in canonical order (WorldData.selectByRank)',
     layout: 'planar little-endian: x, y, z u24; s, rot, sx u16; tint rgb u8 interleaved; kind u8',
     decode: { world: WORLD, q24: Q24, sMax: S_MAX, sxMin: SX_MIN, tintMax: TINT_MAX },

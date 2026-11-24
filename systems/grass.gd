@@ -46,6 +46,7 @@ var _on := true
 var _frame := 0
 var last_tris := 0
 var last_draws := 0
+var density := 1.0
 
 
 func setup(w: RefCounted) -> void:
@@ -67,6 +68,21 @@ func _ready() -> void:
 
 func materials() -> Array[ShaderMaterial]:
 	return [grass.draw_mat, flowers.draw_mat]
+
+
+# Density lever: every tile draws the first round(f * N) ranks, as a lower Stillwater tier does
+# (grassNear / grassFar / flowers). The bake keeps all of the tier's ranks.
+func set_density(f: float) -> void:
+	if is_equal_approx(f, density):
+		return
+	density = f
+	var sc: Dictionary = VegScatter.generate(GRASS.max_count, GRASS.tile, GRASS.seed)
+	var n_near := maxi(1, roundi(GRASS.near * f))
+	var n_far := maxi(1, roundi(GRASS.far * f))
+	grass.set_meshes(_blade_mesh(sc, n_near, 4), _blade_mesh(sc, n_far, 2), n_near, n_far)
+	grass.draw_mat.set_shader_parameter("far_count", float(n_far))
+	var fm := _flower_mesh(maxi(1, roundi(FLOWERS.near * f)))
+	flowers.set_meshes(fm, fm, maxi(1, roundi(FLOWERS.near * f)), maxi(1, roundi(FLOWERS.far * f)))
 
 
 func is_on() -> bool:
@@ -141,7 +157,7 @@ func _blade_mesh(sc: Dictionary, count: int, segs: int) -> ArrayMesh:
 
 
 # Stillwater's flowerGeometry: a stem quad (part 0) and a head quad (part 1) per rank.
-func _flower_mesh() -> ArrayMesh:
+func _flower_mesh(count: int = FLOWERS.near) -> ArrayMesh:
 	var sc: Dictionary = VegScatter.generate(FLOWERS.max_count, FLOWERS.tile, FLOWERS.seed)
 	var local: PackedFloat32Array = sc.local
 	var rnd: PackedFloat32Array = sc.rnd
@@ -151,7 +167,7 @@ func _flower_mesh() -> ArrayMesh:
 	var c1 := PackedFloat32Array()
 	var idx := PackedInt32Array()
 	var quad_uv := [Vector2(0, 0), Vector2(1, 0), Vector2(0, 1), Vector2(1, 1)]
-	for b in FLOWERS.near:
+	for b in count:
 		var base := b * 8
 		verts.append_array([Vector3(-0.5, 0, 0), Vector3(0.5, 0, 0), Vector3(-0.5, 1, 0), Vector3(0.5, 1, 0)])
 		verts.append_array([Vector3(-0.5, 1, -0.5), Vector3(0.5, 1, -0.5), Vector3(-0.5, 1, 0.5), Vector3(0.5, 1, 0.5)])
@@ -211,9 +227,13 @@ class Ring:
 	var last_tris := 0
 	var last_draws := 0
 	var total_bakes := 0
+	var draw_near := 0
+	var draw_far := 0
 
 	func _init(owner: Node3D, c: Dictionary, bake_shader: String, draw_shader: String, meshes: Array) -> void:
 		cfg = c
+		draw_near = cfg.near
+		draw_far = cfg.far
 		world = owner.world
 		tile = cfg.tile
 		radius = cfg.radius
@@ -274,6 +294,14 @@ class Ring:
 		buf_far.resize(capacity * 16)
 		mmi_near = _instance(owner, mm_near)
 		mmi_far = _instance(owner, mm_far)
+
+	func set_meshes(near_mesh: ArrayMesh, far_mesh: ArrayMesh, n_near: int, n_far: int) -> void:
+		near_mesh.surface_set_material(0, draw_mat)
+		far_mesh.surface_set_material(0, draw_mat)
+		mm_near.mesh = near_mesh
+		mm_far.mesh = far_mesh
+		draw_near = n_near
+		draw_far = n_far
 
 	func _multimesh(mesh: ArrayMesh) -> MultiMesh:
 		mesh.surface_set_material(0, draw_mat)
@@ -350,7 +378,7 @@ class Ring:
 		mm_far.buffer = buf_far
 		mm_near.visible_instance_count = near_vis
 		mm_far.visible_instance_count = far_vis
-		last_tris = near_vis * int(cfg.near) * int(cfg.near_tris) + far_vis * int(cfg.far) * int(cfg.far_tris)
+		last_tris = near_vis * draw_near * int(cfg.near_tris) + far_vis * draw_far * int(cfg.far_tris)
 		last_draws = (1 if near_vis > 0 else 0) + (1 if far_vis > 0 else 0)
 
 	# One instance: identity basis moved to (tile origin x, base height, tile origin z); custom =

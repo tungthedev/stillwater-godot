@@ -21,6 +21,9 @@ var sun_dir := Vector3.UP
 var sun_col := Vector3.ONE
 var light_col := Vector3.ONE
 var sky_mat: ShaderMaterial
+# Every material that ends in w_grade, so the post switch reaches all of them.
+var mats: Array[ShaderMaterial] = []
+var post_on := false
 
 
 # src/env.js sunDirection: +x east, +z south, y up; returns the direction towards the sun.
@@ -87,7 +90,9 @@ func _ready() -> void:
 	var peak := maxf(light_col.x, maxf(light_col.y, light_col.z))
 	sun.light_color = Color(light_col.x / peak, light_col.y / peak, light_col.z / peak)
 	sun.light_energy = peak / PI * EXPOSURE
-	sun.shadow_enabled = true
+	# Off by default: every Godot material here is unshaded and casts nothing, so the map would be
+	# empty work. Stillwater's side of the comparison runs with no=shadow (docs/compare.md).
+	sun.shadow_enabled = false
 	sun.directional_shadow_max_distance = 80.0
 
 
@@ -97,10 +102,24 @@ func apply_to(mat: ShaderMaterial) -> void:
 	mat.set_shader_parameter("sun_col", sun_col)
 	mat.set_shader_parameter("light_col", light_col)
 	mat.set_shader_parameter("exposure", EXPOSURE)
+	mat.set_shader_parameter("post_on", 1.0 if post_on else 0.0)
+	if not mats.has(mat):
+		mats.append(mat)
 
 
-func set_sky_lut(tex: Texture2D) -> void:
-	sky_mat.set_shader_parameter("sky_lut", tex)
+func set_post(on: bool) -> void:
+	post_on = on
+	for m in mats:
+		m.set_shader_parameter("post_on", 1.0 if on else 0.0)
+
+
+# Sky LUT and noise; the cirrus values are the hour-16 ones (captures/slice2/stillwater_values.json),
+# set explicitly because sky-shader uniform defaults are not applied in this renderer.
+func set_sky(lut: Texture2D, noise: Texture2D) -> void:
+	sky_mat.set_shader_parameter("sky_lut", lut)
+	sky_mat.set_shader_parameter("noise_tex", noise)
+	sky_mat.set_shader_parameter("cloud_offset", Vector2(-223.16, -143.45))
+	sky_mat.set_shader_parameter("wind_dir", Vector2(0.8253, 0.5646))
 	apply_to(sky_mat)
 
 

@@ -223,7 +223,22 @@ func load_trees() -> Dictionary:
 		"tint": bytes.slice(n * 15, n * 18),
 		"tint_max": float(d.tintMax),
 		"kind": bytes.slice(n * 18, n * 19),
+		"rank": PackedInt32Array(),
 	}
+	if tm.has("rankFile"):
+		var rb := FileAccess.get_file_as_bytes(dir.path_join(tm.rankFile))
+		if rb.size() == n * 2:
+			out.rank = _u16_raw(rb, n)
+		else:
+			push_error("compact_world: %s is %d bytes, expected %d" % [tm.rankFile, rb.size(), n * 2])
+	return out
+
+
+static func _u16_raw(bytes: PackedByteArray, n: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(n)
+	for i in n:
+		out[i] = bytes.decode_u16(i * 2)
 	return out
 
 

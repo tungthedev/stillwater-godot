@@ -1,9 +1,13 @@
-extends Node3D
+extends Node
 
-# Wires the systems together. Each system builds itself in _ready, so add_child order is build order.
-# The test water is not added: it would cover the real terrain, and the real one comes later.
+# Wires the systems together. The 3D world lives inside the post chain's scene viewport
+# (systems/post.gd), rendered at the internal size; the composite and the UI draw on the screen.
+# Each system builds itself in _ready, so add_child order is build order.
 
 const CompactWorld := preload("res://world/compact_world.gd")
+const Flags := preload("res://systems/flags.gd")
+# Bumped with every behaviour change, so a measurement can prove which build it ran.
+const BUILD := "slice5-1"
 
 
 func _ready() -> void:
@@ -13,48 +17,59 @@ func _ready() -> void:
 		_fatal("world data failed to load (see log)")
 		return
 	var t_load := Time.get_ticks_msec() - t0
-	var env_sys := _add("environment")
-	env_sys.set_sky_lut(world.sky_lut_tex)
-	var terrain_sys := _add("terrain", world)
+	var env_sys := Node3D.new()
+	env_sys.name = "environment"
+	env_sys.set_script(load("res://systems/environment.gd"))
+	var post := Node.new()
+	post.name = "post"
+	post.set_script(load("res://systems/post.gd"))
+	post.setup(env_sys, Flags.float_targets() and not Flags.has("ldr"))
+	add_child(post)
+	var scene: SubViewport = post.scene_vp
+	scene.add_child(env_sys)
+	env_sys.set_sky(world.sky_lut_tex, world.noise_tex)
+	var terrain_sys := _add(scene, "terrain", world)
 	env_sys.apply_to(terrain_sys.mat)
-	var trees_sys := _add("trees", world)
+	var clouds_sys := _add(scene, "clouds", world)
+	for m in clouds_sys.materials():
+		env_sys.apply_to(m)
+	var trees_sys := _add(scene, "trees", world)
 	for m in trees_sys.materials():
 		env_sys.apply_to(m)
-	if _flag("notrees", "--no-trees"):
+	if Flags.has("notrees") or Flags.has("no-trees"):
 		trees_sys.set_on(false)
-	var grass_sys := _add("grass", world)
+	var grass_sys := _add(scene, "grass", world)
 	for m in grass_sys.materials():
 		env_sys.apply_to(m)
-	if _flag("nograss", "--no-grass"):
+	if Flags.has("nograss") or Flags.has("no-grass"):
 		grass_sys.set_on(false)
-	var bench_sys := Node.new()
-	bench_sys.name = "bench"
-	bench_sys.set_script(load("res://systems/bench.gd"))
-	bench_sys.setup(terrain_sys, trees_sys, grass_sys)
-	add_child(bench_sys)
 	var cam := Camera3D.new()
 	cam.name = "camera"
 	cam.set_script(load("res://systems/walk_camera.gd"))
 	cam.setup(world)
-	cam.mode_changed.connect(bench_sys.restart)
-	add_child(cam)
-	bench_sys.restart(cam.mode())
+	scene.add_child(cam)
 	var ui := CanvasLayer.new()
+	var bench_sys := Node.new()
+	bench_sys.name = "bench"
+	bench_sys.set_script(load("res://systems/bench.gd"))
+	add_child(bench_sys)
+	cam.mode_changed.connect(bench_sys.restart)
+	bench_sys.restart(cam.mode())
 	ui.name = "ui"
 	ui.set_script(load("res://systems/ui.gd"))
-	ui.setup(env_sys, grass_sys, bench_sys, cam, terrain_sys, trees_sys)
+	ui.setup({"env": env_sys, "grass": grass_sys, "bench": bench_sys, "cam": cam, "terrain": terrain_sys, "trees": trees_sys, "post": post, "build": BUILD})
+	bench_sys.setup(terrain_sys, trees_sys, grass_sys, clouds_sys, cam, ui.settings)
 	add_child(ui)
-	print("BUILD load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s" % [t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode()])
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--shot="):
-			_shot(a.substr(7))
-
-
-# A switch given as ?<web> in the page URL or <desktop> after `--` on the command line.
-static func _flag(web: String, desktop: String) -> bool:
-	if OS.has_feature("web"):
-		return bool(JavaScriptBridge.eval("new URLSearchParams(location.search).has('%s')" % web))
-	return OS.get_cmdline_user_args().has(desktop)
+	print("BUILD %s load_ms=%d scene_ms=%d trees_ms=%d trees=%s grass=%s pose=%s screen=%dx%d internal=%dx%d dpr=%s target=%s post=%s clouds=%d puffs renderer=%s" % [
+		BUILD, t_load, Time.get_ticks_msec() - t0, trees_sys.load_ms, "on" if trees_sys.is_on() else "off", "on" if grass_sys.is_on() else "off", cam.mode(),
+		post.screen.x, post.screen.y, post.internal.x, post.internal.y, str(Flags.device_pixel_ratio()), post.target_format(), "on" if post.is_on() else "off",
+		clouds_sys.puffs, RenderingServer.get_video_adapter_name()])
+	var bench_shot := Flags.value("bench-shot")
+	if bench_shot != "":
+		bench_sys.finished.connect(func(_r: Dictionary) -> void: _shot(bench_shot), CONNECT_ONE_SHOT)
+	var shot := Flags.value("shot")
+	if shot != "":
+		_shot(shot)
 
 
 # Look checks: `godot --path . -- --pose=forest --no-ui --shot=out.png` saves one frame and quits.
@@ -67,13 +82,13 @@ func _shot(path: String) -> void:
 	get_tree().quit(0 if err == OK else 1)
 
 
-func _add(sys_name: String, w: RefCounted = null) -> Node3D:
+func _add(parent: Node, sys_name: String, w: RefCounted = null) -> Node3D:
 	var n := Node3D.new()
 	n.name = sys_name
 	n.set_script(load("res://systems/%s.gd" % sys_name))
 	if w != null:
 		n.setup(w)
-	add_child(n)
+	parent.add_child(n)
 	return n
 
 

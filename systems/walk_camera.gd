@@ -1,13 +1,16 @@
 extends Camera3D
 
 # Bench poses from data/valley/web/meta.json (the same ones Stillwater's bench and capture use)
-# plus a walk along the real trail. Pick the start mode with ?pose=<mode> on Web or
+# plus Stillwater's bench walk (src/dev/bench.js): from the trailhead along the real trail at
+# 2.0 m/s, eye 1.68 m above the ground, pitch -0.04, looking 8 m ahead.
+# Pick the start mode with ?pose=<mode> on Web or
 # `-- --pose=<mode>` on desktop; the UI's Pose button cycles them.
 
 signal mode_changed(mode: String)
 
 const MODES: Array[String] = ["trailhead", "forest", "walk"]
-const WALK_SPEED := 1.4
+const WALK_SPEED := 2.0
+const WALK_PITCH := -0.04
 const LOOK_AHEAD := 8.0
 
 var world: RefCounted
@@ -94,7 +97,7 @@ func _walk_to(s: float) -> void:
 	position = Vector3(p.x, world.height_near(p.x, p.y) + eye, p.y)
 	var d := ahead - p
 	# three.js / Godot yaw: forward is -Z rotated by yaw about +Y.
-	rotation = Vector3(-0.02, atan2(-d.x, -d.y), 0.0)
+	rotation = Vector3(WALK_PITCH, atan2(-d.x, -d.y), 0.0)
 
 
 func _at(s: float) -> Vector2:
