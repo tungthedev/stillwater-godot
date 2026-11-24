@@ -1,29 +1,92 @@
 extends Camera3D
 
-# Walks a fixed circle so every run sees the same frames.
+# Bench poses from data/valley/web/meta.json (the same ones Stillwater's bench and capture use)
+# plus a walk along the real trail. Pick the start mode with ?pose=<mode> on Web or
+# `-- --pose=<mode>` on desktop; the UI's Pose button cycles them.
 
-const WATER_Y := -6.0
-const PATH_R := 150.0
-const SPEED := 3.0
+signal mode_changed(mode: String)
 
-var ground: RefCounted
+const MODES: Array[String] = ["trailhead", "forest", "walk"]
+const WALK_SPEED := 1.4
+const LOOK_AHEAD := 8.0
+
+var world: RefCounted
+var mode_i := 0
 var t := 0.0
+var walk_pts := PackedVector2Array()
+var walk_dist := PackedFloat32Array()
 
 
-func setup(g: RefCounted) -> void:
-	ground = g
+func setup(w: RefCounted) -> void:
+	world = w
 
 
 func _ready() -> void:
-	far = 1500.0
-	fov = 70.0
+	var p: Dictionary = world.meta.poses
+	fov = float(p.fovVerticalDeg)
+	near = float(p.near)
+	far = float(p.far)
+	keep_aspect = Camera3D.KEEP_HEIGHT
+	walk_pts = world.walk_points()
+	walk_dist.resize(walk_pts.size())
+	var acc := 0.0
+	for i in walk_pts.size():
+		if i > 0:
+			acc += walk_pts[i].distance_to(walk_pts[i - 1])
+		walk_dist[i] = acc
+	var want := start_mode()
+	set_mode(maxi(0, MODES.find(want)))
+
+
+static func start_mode() -> String:
+	if OS.has_feature("web"):
+		var v = JavaScriptBridge.eval("new URLSearchParams(location.search).get('pose') || ''")
+		return str(v) if v != null else ""
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--pose="):
+			return a.substr(7)
+	return ""
+
+
+func mode() -> String:
+	return MODES[mode_i]
+
+
+func next_mode() -> void:
+	set_mode((mode_i + 1) % MODES.size())
+
+
+func set_mode(i: int) -> void:
+	mode_i = i
+	t = 0.0
+	if mode() != "walk":
+		var s: Dictionary = world.pose(mode())
+		position = Vector3(s.position[0], s.position[1], s.position[2])
+		rotation = Vector3(float(s.pitch), float(s.yaw), 0.0)
+	else:
+		_walk_to(0.0)
+	mode_changed.emit(mode())
 
 
 func _process(delta: float) -> void:
-	t += delta
-	var a := t * SPEED / PATH_R
-	var p := Vector3(cos(a) * PATH_R, 0.0, sin(a) * PATH_R)
-	p.y = maxf(ground.height_at(p.x, p.z), WATER_Y) + 1.7
-	var ahead := Vector3(cos(a + 0.05) * PATH_R, 0.0, sin(a + 0.05) * PATH_R)
-	ahead.y = p.y - 0.4
-	look_at_from_position(p, ahead, Vector3.UP)
+	if mode() == "walk":
+		t += delta
+		_walk_to(fmod(t * WALK_SPEED, walk_dist[walk_dist.size() - 1] - LOOK_AHEAD))
+
+
+func _walk_to(s: float) -> void:
+	var p := _at(s)
+	var ahead := _at(s + LOOK_AHEAD)
+	var eye := float(world.meta.poses.eyeHeight)
+	position = Vector3(p.x, world.height_near(p.x, p.y) + eye, p.y)
+	var d := ahead - p
+	# three.js / Godot yaw: forward is -Z rotated by yaw about +Y.
+	rotation = Vector3(-0.02, atan2(-d.x, -d.y), 0.0)
+
+
+func _at(s: float) -> Vector2:
+	var i := walk_dist.bsearch(s)
+	i = clampi(i, 1, walk_pts.size() - 1)
+	var span := walk_dist[i] - walk_dist[i - 1]
+	var f := clampf((s - walk_dist[i - 1]) / maxf(span, 1e-3), 0.0, 1.0)
+	return walk_pts[i - 1].lerp(walk_pts[i], f)
