@@ -273,7 +273,7 @@ func _build_panel() -> void:
 const WIDTHS_FPS := [78, 44, 50, 50, 56, 44]
 # Fits the 354 pt inside of the panel on a 390 pt wide phone.
 const WIDTHS_MS := [60, 58, 58, 60, 54, 46]
-const WIDTHS_SWEEP := [136, 68, 74, 70]
+const WIDTHS_SWEEP := [126, 62, 68, 66]
 
 
 func _row(cells: Array, size: int, col: Color, widths: Array = WIDTHS_FPS) -> HBoxContainer:

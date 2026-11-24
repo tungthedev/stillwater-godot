@@ -372,7 +372,7 @@ func _finish_all() -> void:
 	var line := JSON.stringify(result)
 	print("SWEEP " + line)
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("window.__sweep = %s;" % line)
+		JavaScriptBridge.eval("window.__sweep = JSON.parse(%s);" % JSON.stringify(line))
 	finished.emit(result)
 
 
