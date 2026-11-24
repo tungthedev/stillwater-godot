@@ -20,6 +20,7 @@ extends Node3D
 
 const VegScatter := preload("res://world/veg_scatter.gd")
 const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
+const Flags := preload("res://systems/flags.gd")
 
 # quality.js low: grassRadius 30, grassNear 1664, grassFar 1024, grassNearLod 16,
 # grassFarWidthScale 1.32, flowers 576 (flower radius min(34, 0.75 * grassRadius)).
@@ -69,6 +70,9 @@ func _ready() -> void:
 	grass.draw_mat.set_shader_parameter("lod_end", GRASS.near_lod)
 	grass.draw_mat.set_shader_parameter("far_count", float(GRASS.far))
 	grass.draw_mat.set_shader_parameter("far_width_scale", GRASS.far_width)
+	var gdbg := Flags.value("grassdbg")
+	if gdbg == "1" or (Flags.has("grassdbg") and gdbg != "0"):
+		grass.draw_mat.set_shader_parameter("dbg_tallness", 1.0)
 	var fm := _flower_mesh()
 	flowers = Ring.new(self, FLOWERS, "res://shaders/flower_bake.gdshader", "res://shaders/flower.gdshader", [fm, fm])
 	print("GRASS built in %d ms: grass atlas %s, flower atlas %s" % [Time.get_ticks_msec() - t0, grass.vp.size, flowers.vp.size])
