@@ -19,6 +19,7 @@ const BOX_MIN_Y := -200.0
 const BOX_MAX_Y := 4400.0
 const SKIRT := true
 const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
+const Flags := preload("res://systems/flags.gd")
 
 var world: RefCounted
 var mat: ShaderMaterial
@@ -62,6 +63,8 @@ func _ready() -> void:
 	mat.set_shader_parameter("grid_n", float(N))
 	mat.set_shader_parameter("lod_k", LOD_K)
 	mat.set_shader_parameter("skirt_on", 1.0 if SKIRT else 0.0)
+	# ?dbg_terrain=<bits>: the ?probe=terrain switches in the real game, to confirm a probe finding.
+	mat.set_shader_parameter("dbg_terrain", int(Flags.value("dbg_terrain", "0")))
 
 	var patch := _patch_mesh(N)
 	patch.surface_set_material(0, mat)

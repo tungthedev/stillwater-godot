@@ -30,6 +30,55 @@ const float grade_sat = 1.1;
 const float grade_contrast = 0.11;
 const float vignette = 0.28;
 
+// ?probe=terrain switches (systems/terrain_probe_page.gd): one bit per suspect, so a phone can
+// bisect a wrong picture without a new build. Only the terrain shader defines W_DBG; in every
+// other shader DBG() is the constant false and the compiler drops the branches.
+#define DBG_LEGACY_POW 1
+#define DBG_LEGACY_RSTEP 2
+#define DBG_LEGACY_MISC 4
+#define DBG_NO_GUARD 8
+#define DBG_NO_FLOOR 16
+#define DBG_NO_ATM 32
+#define DBG_CLASSIC_IND 64
+#define DBG_CLASSIC_RAMP 128
+#define DBG_OUT_ALBEDO 256
+#define DBG_NAN_POW 1024
+#ifdef W_DBG
+uniform int dbg_terrain = 0;
+#define DBG(bit) ((dbg_terrain & (bit)) != 0)
+#else
+#define DBG(bit) false
+#endif
+
+// smoothstep falling from 1 to 0 as x goes from `lo` up to `hi`. GLSL leaves
+// smoothstep(edge0, edge1, x) undefined when edge0 >= edge1, so the falling ones are written as
+// one minus the rising one.
+float w_rstep(float hi, float lo, float x) {
+	if (DBG(DBG_LEGACY_RSTEP)) {
+		return smoothstep(hi, lo, x);
+	}
+	return 1.0 - smoothstep(lo, hi, x);
+}
+
+// NaN -> fallback. The bit test is integer work, which a fast-math compiler cannot fold away the
+// way it may fold isnan(). isnan() stays as well: every shader that renders correctly on iPhone was
+// compiled with it, and its presence may decide how strictly the driver compiles the rest.
+vec3 w_denan(vec3 c, vec3 fallback) {
+	if (DBG(DBG_NO_GUARD)) {
+		return c;
+	}
+	bvec3 bad = greaterThan(floatBitsToUint(c) & uvec3(2147483647u), uvec3(2139095040u));
+#ifndef W_NO_ISNAN
+	bad = bvec3(bad.x || isnan(c.x), bad.y || isnan(c.y), bad.z || isnan(c.z));
+#endif
+	return mix(c, fallback, bad);
+}
+
+// normalize() of a zero vector is undefined; this returns zero for it instead.
+vec3 w_normalize(vec3 v) {
+	return v * inversesqrt(max(dot(v, v), 1e-20));
+}
+
 float n_hash12(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
 	p3 += dot(p3, p3.yzx + 33.33);
@@ -44,7 +93,8 @@ float n_noise(vec2 x) {
 }
 
 vec2 w_lut_uv(vec3 dir) {
-	float az = atan(dir.z, dir.x);
+	// atan(0, 0) is undefined (a direction straight up or down).
+	float az = abs(dir.x) + abs(dir.z) > 1e-7 ? atan(dir.z, dir.x) : 0.0;
 	float el = asin(clamp(dir.y, -1.0, 1.0));
 	float u = clamp(fract(az / 6.2831853 + 0.5), 0.003, 0.997);
 	float v = clamp(0.5 + 0.5 * sign(el) * sqrt(abs(el) / 1.5707963), 0.005, 0.995);
@@ -54,7 +104,7 @@ vec2 w_lut_uv(vec3 dir) {
 vec3 w_sky(vec3 dir) {
 	vec3 c = textureLod(sky_lut, w_lut_uv(dir), 0.0).rgb;
 	// Guard NaN/Inf before clamping so bloom never explodes into squares.
-	c = mix(c, vec3(0.0), isnan(c));
+	c = w_denan(c, vec3(0.0));
 	return clamp(c, vec3(0.0), vec3(40.0));
 }
 
@@ -84,7 +134,7 @@ vec3 w_horizon_color(vec3 dir) {
 	vec3 col = w_sky_base(d);
 	float mu = dot(d, sun_dir);
 	col += sun_col * pow(max(mu, 0.0), 28.0) * 0.24 * 0.45;
-	col = mix(col, vec3(0.0), isnan(col));
+	col = w_denan(col, vec3(0.0));
 	return clamp(col, vec3(0.0), vec3(40.0));
 }
 
@@ -152,7 +202,7 @@ vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
 }
 
 vec3 w_grade(vec3 col, vec2 screen_uv, vec2 viewport) {
-	col = mix(col, vec3(0.0), isnan(col));
+	col = w_denan(col, vec3(0.0));
 	if (post_on > 0.5) {
 		return godot_out(clamp(col, vec3(0.0), vec3(200.0)));
 	}

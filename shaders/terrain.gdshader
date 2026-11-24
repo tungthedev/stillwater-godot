@@ -14,6 +14,8 @@
 shader_type spatial;
 render_mode unshaded, fog_disabled, cull_back;
 
+// Turns on the ?probe=terrain switches (dbg_terrain) in the shared includes for this shader only.
+#define W_DBG
 #include "res://shaders/stillwater.gdshaderinc"
 #include "res://shaders/atmosphere.gdshaderinc"
 #include "res://shaders/world.gdshaderinc"
@@ -29,6 +31,19 @@ uniform vec4 waterfall = vec4(-893.95, 132.59, 118.0, 58.0);
 
 varying vec3 wpos;
 
+// x * x. pow() with a negative base is undefined in GLSL: desktop drivers square it, strict
+// compilers (Metal without fast math) return NaN, and one NaN in the trail colour blacks out the
+// whole ground because mix() carries it even at weight 0.
+float t_sq(float x) {
+	if (DBG(DBG_NAN_POW)) {
+		return x < 0.0 ? uintBitsToFloat(2143289344u) : x * x;
+	}
+	if (DBG(DBG_LEGACY_POW)) {
+		return pow(x, 2.0);
+	}
+	return x * x;
+}
+
 // ---------------- surface ----------------
 vec4 cliff_plane(vec2 p) {
 	vec4 vn = texture(noise_tex, p * 0.022);
@@ -39,7 +54,7 @@ vec4 cliff_plane(vec2 p) {
 	float x_warp = p.x + (vn.g - 0.5) * 1.25 + (hi1 - 0.5) * 0.42;
 	float strata_band = fract(y_warp * 0.18 + vn.b * 0.10);
 	float strata_top = smoothstep(0.68, 0.78, strata_band);
-	float strata_under = smoothstep(0.18, 0.04, strata_band);
+	float strata_under = w_rstep(0.18, 0.04, strata_band);
 	float b1 = texture(noise_tex, vec2(x_warp * 0.055 + 0.13, floor(y_warp * 0.18) * 0.27)).r;
 	float b2 = texture(noise_tex, vec2(x_warp * 0.11 + 0.47, y_warp * 0.085)).g;
 	float facet = b1 * 0.52 + b2 * 0.32 + hi1 * 0.16;
@@ -104,7 +119,8 @@ void fragment() {
 	float trail_raw = w_trail_raw(xz);
 	float trail = max(trail_raw, 0.0);
 	float bed = max(-trail_raw, 0.0);
-	vec2 fall = normalize(n.xz + 1e-4);
+	vec2 fall = n.xz + 1e-4;
+	fall = DBG(DBG_LEGACY_MISC) ? normalize(fall) : fall * inversesqrt(max(dot(fall, fall), 1e-20));
 	vec2 across = vec2(-fall.y, fall.x);
 	vec2 gp = vec2(dot(xz, across) * 0.018, dot(xz, fall) * 0.0024);
 	float gully = texture(noise_tex, gp).g * 0.58 + texture(noise_tex, gp * 3.1 + 0.4).b * 0.42;
@@ -148,7 +164,7 @@ void fragment() {
 	}
 	vec3 col = grass;
 	float forest = smoothstep(0.12, 0.55, bio.r);
-	float farF = fb * smoothstep(1040.0, 860.0, h + (nH.g - 0.5) * 90.0) * smoothstep(0.48, 0.28, slope) * smoothstep(160.0, 340.0, h);
+	float farF = fb * w_rstep(1040.0, 860.0, h + (nH.g - 0.5) * 90.0) * w_rstep(0.48, 0.28, slope) * smoothstep(160.0, 340.0, h);
 	forest = max(forest * (1.0 - fb), farF);
 	float crowns = texture(noise_tex, xz * 0.042).a * 0.6 + texture(noise_tex, xz * 0.014).a * 0.4;
 	vec3 forestHue = mix(forestF, vec3(0.068, 0.20, 0.062), smoothstep(0.32, 0.78, nH.r));
@@ -208,7 +224,7 @@ void fragment() {
 				+ texture(noise_tex, vec2(wp.x, wp.y) * 0.26 + 0.37) * tw.z;
 		float topFace = smoothstep(0.52, 0.82, n_pre.y);
 		float ledgeMoss = smoothstep(0.28, 0.78, shelfStep) * (0.45 + 0.55 * smoothstep(0.12, 0.46, n_pre.y));
-		float shelfMoss = clamp(topFace + ledgeMoss * (0.55 + 0.45 * wfZone), 0.0, 1.0) * smoothstep(0.26, 0.66, vf.g + nd.r * 0.26) * smoothstep(950.0, 500.0, h);
+		float shelfMoss = clamp(topFace + ledgeMoss * (0.55 + 0.45 * wfZone), 0.0, 1.0) * smoothstep(0.26, 0.66, vf.g + nd.r * 0.26) * w_rstep(950.0, 500.0, h);
 		vec3 mossCol = mix(vec3(0.065, 0.24, 0.055), vec3(0.17, 0.39, 0.075), vf.b);
 		cliffC = mix(cliffC, mossCol, shelfMoss * 0.90);
 		if (wfZone > 0.01) {
@@ -233,10 +249,10 @@ void fragment() {
 	col = mix(col, rock, rockW);
 
 	float snowLine = 1780.0 + (nH.r - 0.5) * 220.0 - n.z * 90.0;
-	float slopeCap = smoothstep(0.56, 0.38, slope);
+	float slopeCap = w_rstep(0.56, 0.38, slope);
 	float snowEdge = (nz.g - 0.5) * 110.0 + (nm.a - 0.5) * 60.0;
 	float snowW = smoothstep(snowLine + snowEdge * noiseK, snowLine + snowEdge * noiseK + 22.0, h) * smoothstep(0.0, 0.08, slopeCap - 0.42);
-	snowW = max(snowW, smoothstep(snowLine + 320.0, snowLine + 520.0, h) * smoothstep(0.76, 0.58, slope));
+	snowW = max(snowW, smoothstep(snowLine + 320.0, snowLine + 520.0, h) * w_rstep(0.76, 0.58, slope));
 	col = mix(col, snow * (0.92 + 0.08 * nd.b), snowW);
 
 	float wl = water_level;
@@ -247,8 +263,8 @@ void fragment() {
 	float pebbleMask = smoothstep(0.45, 0.68, shN2.a);
 	vec3 beachCol = mix(sand * (0.85 + 0.25 * nf.b), vec3(0.48, 0.45, 0.40) * (0.8 + 0.38 * nf.a), pebbleMask * 0.75);
 	col = mix(col, beachCol, shore * (1.0 - rockW) * 0.88);
-	float under = smoothstep(wl + 0.12, wl - 0.55, h);
-	col = mix(col, mix(sand * 0.78, mud, smoothstep(wl - 0.6, wl - 4.5, h)), under);
+	float under = w_rstep(wl + 0.12, wl - 0.55, h);
+	col = mix(col, mix(sand * 0.78, mud, w_rstep(wl - 0.6, wl - 4.5, h)), under);
 	t_wet = max(t_wet, 1.0 - smoothstep(wl - 0.1, wl + 0.55, h));
 
 	// hiking trail
@@ -262,7 +278,7 @@ void fragment() {
 	float twTrail = smoothstep(0.48, 0.515, trailEdge2);
 	vec4 cb2 = texture(noise_tex, xz * 0.85 + 0.31);
 	vec3 tcol = dirt * (0.82 + 0.24 * trHi2) * (0.90 + 0.20 * nz.r);
-	float rut = exp(-pow((trail - 0.74) * 8.5, 2.0)) * 0.32 + exp(-pow((trail - 0.91) * 9.5, 2.0)) * 0.22;
+	float rut = exp(-t_sq((trail - 0.74) * 8.5)) * 0.32 + exp(-t_sq((trail - 0.91) * 9.5)) * 0.22;
 	tcol *= 1.0 - rut;
 	float pebbles = smoothstep(0.70, 0.81, trGrit * 0.65 + trMicro * 0.35) * smoothstep(0.32, 0.74, trHi2);
 	float pebShadow = smoothstep(0.62, 0.74, trGrit) * (1.0 - pebbles);
@@ -305,7 +321,7 @@ void fragment() {
 		vec3 gravel = mix(vec3(0.28, 0.26, 0.22), mix(vec3(0.38, 0.40, 0.42), cWarm, pbLarge.g), cobble);
 		gravel = mix(gravel, mix(cWarm, vec3(0.62, 0.50, 0.34), pbMed.r), peb * 0.65);
 		gravel *= 0.82 + 0.34 * pbFine.b;
-		float bankMoss = smoothstep(0.58, 0.22, bed) * smoothstep(0.32, 0.68, pbLarge.r);
+		float bankMoss = w_rstep(0.58, 0.22, bed) * smoothstep(0.32, 0.68, pbLarge.r);
 		gravel = mix(gravel, vec3(0.12, 0.32, 0.08), bankMoss * 0.75);
 		gravel = mix(gravel, vec3(0.10, 0.28, 0.34), smoothstep(140.0, 520.0, dist) * 0.75);
 		col = mix(col, gravel * 0.85, smoothstep(0.18, 0.48, bed));
@@ -339,9 +355,9 @@ void fragment() {
 			vec3 zc = mix(lowPine, stone, rockMask);
 			float sl = 1160.0 + (nH.r - 0.5) * 190.0 - n.z * 110.0;
 			float edgeJ = (nz.g - 0.5) * 0.045;
-			float snSlope = smoothstep(0.38, 0.34, sB + edgeJ) * smoothstep(sl - 18.0, sl + 18.0, h);
-			float snHighCap = smoothstep(0.50, 0.46, sB + edgeJ) * smoothstep(sl + 230.0, sl + 265.0, h);
-			float snLedge = strataFlat * smoothstep(0.45, 0.36, sB) * smoothstep(sl + 20.0, sl + 80.0, h) * 0.75;
+			float snSlope = w_rstep(0.38, 0.34, sB + edgeJ) * smoothstep(sl - 18.0, sl + 18.0, h);
+			float snHighCap = w_rstep(0.50, 0.46, sB + edgeJ) * smoothstep(sl + 230.0, sl + 265.0, h);
+			float snLedge = strataFlat * w_rstep(0.45, 0.36, sB) * smoothstep(sl + 20.0, sl + 80.0, h) * 0.75;
 			float sn = smoothstep(0.35, 0.55, max(max(snSlope, snHighCap), snLedge));
 			vec3 snowFarCol = mix(vec3(0.88, 0.93, 1.0), vec3(0.995, 0.998, 1.0), smoothstep(sl + 60.0, sl + 360.0, h));
 			zc = mix(zc, snowFarCol, sn);
@@ -356,7 +372,8 @@ void fragment() {
 	float bump = mix(0.35, 1.8, max(rockW, bed * 0.6)) * fadeF;
 	vec2 gdm = vec2(nm.r - texture(noise_tex, xz * 0.013 + vec2(0.002, 0.0)).r,
 			nm.r - texture(noise_tex, xz * 0.013 + vec2(0.0, 0.002)).r);
-	n = normalize(n + vec3(gd.x, 0.0, gd.y) * bump + vec3(gdm.x, 0.0, gdm.y) * 1.4 * rockW * fadeM * (1.0 - fb) + cliffNAdd);
+	n = n + vec3(gd.x, 0.0, gd.y) * bump + vec3(gdm.x, 0.0, gdm.y) * 1.4 * rockW * fadeM * (1.0 - fb) + cliffNAdd;
+	n = DBG(DBG_LEGACY_MISC) ? normalize(n) : w_normalize(n);
 
 	// ---- material colour (Stillwater color_fragment) ----
 	vec3 albedo = col;
@@ -409,7 +426,9 @@ void fragment() {
 		vec3 Vw = normalize(cam - wp);
 		float highPeakOnly = smoothstep(1050.0, 1620.0, wp.y) * smoothstep(1400.0, 3400.0, dist);
 		if (highPeakOnly > 0.0) {
-			float rim = pow(1.0 - max(dot(n, Vw), 0.0), 2.8) * highPeakOnly;
+			// dot() of two unit vectors can round above 1, which would make the pow base negative.
+			float rim_base = 1.0 - max(dot(n, Vw), 0.0);
+			float rim = pow(DBG(DBG_LEGACY_MISC) ? rim_base : max(rim_base, 0.0), 2.8) * highPeakOnly;
 			float sunSide = smoothstep(0.02, 0.58, dot(n, sun_dir));
 			float rim_k = painterly > 0.5 ? 0.04 : 0.08;
 			emis += light_col * vec3(1.0, 0.95, 0.86) * rim * sunSide * rim_k * sun_vis * smoothstep(0.0, 0.12, sun_dir.y);
@@ -420,6 +439,13 @@ void fragment() {
 	vec3 atm_mul;
 	vec3 atm_add;
 	w_atmosphere(wp, cam, atm_mul, atm_add);
+	if (DBG(DBG_NO_ATM)) {
+		atm_mul = vec3(1.0);
+		atm_add = vec3(0.0);
+	}
 	lit = lit * atm_mul + atm_add;
+	if (DBG(DBG_OUT_ALBEDO)) {
+		lit = albedo;
+	}
 	ALBEDO = w_grade(lit, SCREEN_UV, VIEWPORT_SIZE);
 }

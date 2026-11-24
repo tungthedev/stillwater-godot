@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "s1-2"
+const BUILD := "s1-3"
 
 
 func _ready() -> void:
@@ -26,6 +26,14 @@ func _ready() -> void:
 		probe.setup(world, BUILD)
 		add_child(probe)
 		print("BUILD %s probe=bake load_ms=%d renderer=%s" % [BUILD, t_load, Flags.gpu_name()])
+		return
+	if Flags.value("probe") == "terrain":
+		var probe := Node.new()
+		probe.name = "terrain_probe"
+		probe.set_script(load("res://systems/terrain_probe_page.gd"))
+		probe.setup(world, BUILD)
+		add_child(probe)
+		print("BUILD %s probe=terrain load_ms=%d renderer=%s" % [BUILD, t_load, Flags.gpu_name()])
 		return
 	var env_sys := Node3D.new()
 	env_sys.name = "environment"
