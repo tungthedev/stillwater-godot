@@ -68,7 +68,7 @@ var mats: Array[ShaderMaterial] = []
 var post_on := false
 var sky_flat := false
 var cirrus_on := true
-var sky_clouds_on := true
+var sky_clouds_on := false
 var frozen := false
 
 

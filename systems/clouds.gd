@@ -21,7 +21,7 @@ var world: RefCounted
 var mat: ShaderMaterial
 var mmi: MultiMeshInstance3D
 var painterly := true
-var billboard_on := false
+var billboard_on := true
 var puffs := 0
 var tris := 0
 var last_draws := 0
@@ -34,7 +34,7 @@ func setup(w: RefCounted) -> void:
 
 func _ready() -> void:
 	painterly = Flags.style() != "classic"
-	billboard_on = Flags.value("clouds", "sky").to_lower() == "billboard"
+	billboard_on = Flags.value("clouds", "billboard").to_lower() != "sky"
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/clouds.gdshader")
 	# Painterly cloud billboards use discard, so keep them strictly after no-discard opaque draws.
