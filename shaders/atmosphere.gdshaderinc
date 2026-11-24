@@ -20,7 +20,7 @@ uniform vec2 wind_dir = vec2(0.8253, 0.5646);
 // Light floor: lit surfaces never drop below a cool share of their albedo, so foliage and ground
 // keep their colour in deep shade and at low sun.
 vec3 w_light_floor(vec3 lit, vec3 albedo) {
-	if (painterly < 0.5) {
+	if (painterly < 0.5 || DBG(DBG_NO_FLOOR)) {
 		return lit;
 	}
 	vec3 floor_alb = mix(albedo, vec3(w_luma(albedo)), 0.30);
@@ -29,7 +29,7 @@ vec3 w_light_floor(vec3 lit, vec3 albedo) {
 
 // Indirect hemisphere fill with cool blue-violet shadows and explicit light floor in painterly mode.
 vec3 w_indirect(vec3 n, vec3 albedo) {
-	if (painterly > 0.5) {
+	if (painterly > 0.5 && !DBG(DBG_CLASSIC_IND)) {
 		float sky_k = smoothstep(-0.35, 0.85, n.y);
 		vec3 hemi = mix(hemi_ground, hemi_sky, sky_k);
 		vec3 soft_alb = mix(albedo, vec3(w_luma(albedo)), 0.18 * (1.0 - sky_k));
@@ -43,7 +43,7 @@ vec3 w_indirect(vec3 n, vec3 albedo) {
 
 // patch.js RE_Direct_Toon diffuse ramp for a material's (wrap, lo, hi); dist is camera distance.
 float w_toon_ramp(float ndl, float wrap, float lo, float hi, float dist) {
-	if (painterly > 0.5) {
+	if (painterly > 0.5 && !DBG(DBG_CLASSIC_RAMP)) {
 		float wp = wrap + 0.14;
 		float w = (ndl + wp) / (1.0 + wp);
 		float ramp_near = smoothstep(max(0.0, lo - 0.05), min(1.0, hi + 0.10), w);
@@ -114,7 +114,7 @@ void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 		atm_add = (hor_col * (1.0 - ext)) * extm + mist_col * (1.0 - extm);
 
 		if (dist > 1450.0) {
-			float high_look = smoothstep(200.0, 380.0, cam.y) * smoothstep(0.05, -0.18, dir.y);
+			float high_look = smoothstep(200.0, 380.0, cam.y) * w_rstep(0.05, -0.18, dir.y);
 			float low_basin = exp(-max(wp.y - water_level - 18.0, 0.0) / 260.0);
 			float peak_crisp = 1.0 - 0.38 * smoothstep(520.0, 1450.0, wp.y);
 			float a1 = clamp(smoothstep(1450.0, 3800.0, dist) * (0.10 + 0.30 * low_basin) * peak_crisp * (1.0 - 0.56 * high_look), 0.0, 0.40);
@@ -131,8 +131,8 @@ void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 			atm_mul *= 1.0 - hor_fade;
 			atm_add = mix(atm_add, hor_col, hor_fade);
 		}
-		atm_mul = clamp(mix(atm_mul, vec3(1.0), isnan(atm_mul)), vec3(0.0), vec3(1.0));
-		atm_add = clamp(mix(atm_add, vec3(0.0), isnan(atm_add)), vec3(0.0), vec3(40.0));
+		atm_mul = clamp(w_denan(atm_mul, vec3(1.0)), vec3(0.0), vec3(1.0));
+		atm_add = clamp(w_denan(atm_add, vec3(0.0)), vec3(0.0), vec3(40.0));
 		return;
 	}
 
@@ -155,7 +155,7 @@ void w_atmosphere(vec3 wp, vec3 cam, out vec3 atm_mul, out vec3 atm_add) {
 		vec3 sky_mid = w_sky(normalize(vec3(dir.x, 0.28, dir.z)));
 		float lh = w_luma(sky_hor);
 		vec3 airy = max(mix(vec3(lh), mix(sky_hor, sky_mid, 0.45), 1.12) * vec3(0.92, 0.98, 1.18), vec3(0.0));
-		float high_look = smoothstep(200.0, 380.0, cam.y) * smoothstep(0.05, -0.18, dir.y);
+		float high_look = smoothstep(200.0, 380.0, cam.y) * w_rstep(0.05, -0.18, dir.y);
 		float low_basin = exp(-max(wp.y - water_level - 18.0, 0.0) / 260.0);
 		float peak_crisp = 1.0 - 0.42 * smoothstep(520.0, 1450.0, wp.y);
 		float a1 = clamp(smoothstep(1450.0, 3600.0, dist) * (0.10 + 0.32 * low_basin) * peak_crisp * (1.0 - 0.56 * high_look), 0.0, 0.40);

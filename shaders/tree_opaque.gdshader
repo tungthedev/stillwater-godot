@@ -63,8 +63,8 @@ void vertex() {
 		VERTEX += NORMAL * sin(TIME * 3.0 + p0.y * 30.0 + p0.x * 20.0 + ph * 5.0) * 0.003 * k;
 
 		mat3 m = mat3(MODEL_MATRIX);
-		v_wn = normalize(m * NORMAL);
-		v_ln = normalize(m * (NORMAL / vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2]))));
+		v_wn = w_normalize(m * NORMAL);
+		v_ln = w_normalize(m * (NORMAL / vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2]))));
 		v_col = CUSTOM0.rgb * INSTANCE_CUSTOM.rgb;
 		v_crown = vec3(CUSTOM0.a, CUSTOM1.x, CUSTOM1.y);
 		v_lpos = p0;
@@ -86,7 +86,8 @@ void fragment() {
 	if (bark) {
 		// Cheap painterly bark: one tileable noise_tex sample wrapped seamlessly around the trunk
 		// via cylindrical angle (8 cycles / 2*pi wraps cleanly) and stretched vertically.
-		float angB = atan(v_wn.z, v_wn.x);
+		// atan(0, 0) is undefined (a flat trunk cap facing straight up).
+		float angB = abs(v_wn.x) + abs(v_wn.z) > 1e-7 ? atan(v_wn.z, v_wn.x) : 0.0;
 		vec2 buv = vec2(angB * (8.0 / TAU) + v_wpos.y * 0.05, v_wpos.y * 0.25);
 		vec4 bn = texture(noise_tex, buv);
 		bool isBirch = v_col.r > 0.42 && v_col.b > 0.36;
@@ -115,7 +116,7 @@ void fragment() {
 		if (!bark) {
 			// Classic Stillwater foliage shading (?style=classic).
 			base_albedo = v_col;
-			vec3 Nw = normalize(v_wn);
+			vec3 Nw = w_normalize(v_wn);
 			float sunSide = clamp(dot(Nw, sun_dir) * 0.5 + 0.5, 0.0, 1.0);
 			float coreAO = clamp(v_crown.x, 0.26, 1.08);
 			float topG = clamp(v_crown.y, 0.0, 1.0);
@@ -131,17 +132,17 @@ void fragment() {
 			dcol = volCol * (0.82 + 0.34 * (nv1.g * 0.6 + nv1.b * 0.4)) * vec3(0.68, 0.74, 0.60);
 			base_albedo *= vec3(0.68, 0.74, 0.60);
 		}
-		vec3 n = normalize(v_ln);
+		vec3 n = w_normalize(v_ln);
 		float ramp = w_toon_ramp(dot(n, sun_dir), 0.48, 0.14, 0.56, camD);
 		vec3 direct = ramp * light_col * sun_vis * dcol / PI;
 		vec3 ind = w_indirect(n, dcol);
 		vec3 emis = vec3(0.0);
 		if (!bark) {
-			vec3 Vw = normalize(v_wpos - cam);
-			vec3 nW = normalize(v_wn);
+			vec3 Vw = w_normalize(v_wpos - cam);
+			vec3 nW = w_normalize(v_wn);
 			float lit_s = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
 			float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
-			float rim = pow(1.0 - abs(dot(nW, -Vw)), 2.2);
+			float rim = pow(max(1.0 - abs(dot(nW, -Vw)), 0.0), 2.2);
 			float sunEdge = smoothstep(-0.18, 0.52, dot(nW, sun_dir));
 			float edgeMask = 0.35 + 0.65 * v_crown.x;
 			emis += dcol * light_col * vec3(0.95, 1.02, 0.68) * back * 0.20 * edgeMask * lit_s;
@@ -163,8 +164,8 @@ void fragment() {
 
 		// Zero-mean bumpy normal per clump so each cluster catches its own lit side, then shift
 		// the wrapped light terminator sharply by clump + sprig noise.
-		vec3 n = normalize(v_ln);
-		vec3 n_bump = normalize(n + (nv1.rgb - vec3(0.58, 0.55, 0.52)) * 1.15);
+		vec3 n = w_normalize(v_ln);
+		vec3 n_bump = w_normalize(n + (nv1.rgb - vec3(0.58, 0.55, 0.52)) * 1.15);
 		float ndl_w = clamp((dot(n_bump, sun_dir) + 0.65) / 1.65, 0.0, 1.0);
 		float L_val = ndl_w * 0.64 + topG * 0.22 + clump_s * 0.28 + sprig_s * 0.14;
 		float band_mid = smoothstep(0.26, 0.34, L_val);
@@ -187,10 +188,10 @@ void fragment() {
 
 		// Darker foliage silhouette rim (~0.84x at grazing edge, replacing glossy Fresnel); keep
 		// subtle back-light only on the lit side.
-		vec3 Vw = normalize(v_wpos - cam);
-		vec3 nW = normalize(v_wn);
+		vec3 Vw = w_normalize(v_wpos - cam);
+		vec3 nW = w_normalize(v_wn);
 		float ndv = abs(dot(nW, -Vw));
-		float rim_dark = mix(1.0, 0.84, smoothstep(0.42, 0.10, ndv) * (0.65 + 0.35 * (0.5 - clump_s * 0.5)));
+		float rim_dark = mix(1.0, 0.84, w_rstep(0.42, 0.10, ndv) * (0.65 + 0.35 * (0.5 - clump_s * 0.5)));
 		float lit_s = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
 		float b0 = max(dot(Vw, sun_dir), 0.0);
 		float back = b0 * b0;

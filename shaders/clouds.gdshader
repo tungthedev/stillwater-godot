@@ -40,7 +40,7 @@ void vertex() {
 		vec3 cc = vec3(cl.x, base + (cl.y - base) * 0.30, cl.z);
 		vec3 dc = (wp - cc) * vec3(1.0, 1.45, 1.0);
 		vec3 cn = length(dc) > 1e-3 ? normalize(dc) : vec3(0.0, 1.0, 0.0);
-		float under_b = smoothstep(soft_base + r0 * 0.38, soft_base - r0 * 0.06, wp.y);
+		float under_b = w_rstep(soft_base + r0 * 0.38, soft_base - r0 * 0.06, wp.y);
 		v_n = normalize(mix(cn, vec3(0.0, -1.0, 0.0), under_b * 0.45));
 		v_w = wp;
 		v_h = clamp((wp.y - base) / max(cl.y - base + r0 * 0.55, 1.0), 0.0, 1.0);
@@ -60,7 +60,7 @@ void vertex() {
 		vec3 wp = MODEL_MATRIX[3].xyz + n * r;
 		float base = cl.w;
 		float soft_base = base + (b - 0.5) * 26.0;
-		float under_b = smoothstep(soft_base + r0 * 0.42, soft_base - r0 * 0.08, wp.y);
+		float under_b = w_rstep(soft_base + r0 * 0.42, soft_base - r0 * 0.08, wp.y);
 		if (wp.y < soft_base) {
 			wp.y = soft_base - (soft_base - wp.y) * 0.12;
 		}
@@ -85,7 +85,7 @@ void fragment() {
 		if (r > 0.86) {
 			discard;
 		}
-		vec3 N = normalize(v_n);
+		vec3 N = w_normalize(v_n);
 		vec3 L = sun_dir;
 		vec3 view_dir = normalize(v_w - CAMERA_POSITION_WORLD);
 		vec3 V = -view_dir;
@@ -95,7 +95,7 @@ void fragment() {
 		grad = smoothstep(0.06, 0.90, grad);
 		vec3 col = mix(cloud_shadow_col, cloud_lit_col, grad);
 		// Cluster-dome rim (not per-puff disc edge) so overlapping puffs fuse into one painted volume.
-		float dome_rim = pow(1.0 - max(dot(N, V), 0.0), 1.7);
+		float dome_rim = pow(max(1.0 - max(dot(N, V), 0.0), 0.0), 1.7);
 		float sun_side = smoothstep(-0.15, 0.62, ndl);
 		float fw = pow(max(dot(view_dir, L), 0.0), 3.0);
 		float rim_k = dome_rim * (0.24 * sun_side + 0.52 * fw) * (0.28 + 0.72 * v_h);
@@ -104,7 +104,7 @@ void fragment() {
 		col = mix(col, v_hor, v_haze);
 		ALBEDO = w_grade(col, SCREEN_UV, VIEWPORT_SIZE);
 	} else {
-		vec3 N = normalize(v_n);
+		vec3 N = w_normalize(v_n);
 		vec3 cam = CAMERA_POSITION_WORLD;
 		vec3 V = normalize(cam - v_w);
 		vec3 L = sun_dir;
@@ -121,7 +121,7 @@ void fragment() {
 		vec3 lit_col = sun_c * min(sun_i, 10.0) * 0.35 + zen * 0.45 + vec3(0.055, 0.052, 0.044);
 		vec3 col = mix(shadow_col, lit_col, lit);
 		float fw = pow(max(dot(view_dir, L), 0.0), 3.0);
-		float rim = pow(1.0 - max(dot(N, V), 0.0), 1.6);
+		float rim = pow(max(1.0 - max(dot(N, V), 0.0), 0.0), 1.6);
 		col += sun_c * min(sun_i, 8.5) * rim * (0.10 + fw * 0.75) * 0.32;
 		col += sun_c * min(sun_i, 8.0) * 0.04 * pow(max(dot(N, L), 0.0), 2.0);
 		float en = texture(noise_tex, v_w.xz * 0.0008 + v_w.y * 0.0005 + v_seed).a;

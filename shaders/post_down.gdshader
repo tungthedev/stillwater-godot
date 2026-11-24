@@ -10,7 +10,9 @@ uniform float threshold = 0.95;
 
 vec3 s(vec2 uv, vec2 o) {
 	vec3 c = texture(src, uv + o * texel).rgb;
-	return (any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : c;
+	// NaN or inf, by the float's bits: isnan() / isinf() would make Safari's Metal compile drop fast
+	// math for this shader (see w_denan in stillwater.gdshaderinc).
+	return any(greaterThanEqual(floatBitsToUint(c) & uvec3(2147483647u), uvec3(2139095040u))) ? vec3(0.0) : c;
 }
 float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 karis(vec3 c) { return c / (1.0 + lum(c)); }

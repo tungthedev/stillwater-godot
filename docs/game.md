@@ -44,6 +44,19 @@ M (music). The clock stays at 16:00.
   partial `CLEAR_MODE_NEVER` update, 3D vertex-shader `texelFetch`, and a real trailhead grass tile
   baked and read back against CPU heights/normals/tallness/alpha); shows a phone-readable PASS/FAIL
   panel and writes `window.__probe`.
+- `?probe=terrain`: on-device bisection for a black terrain. Renders the trailhead (terrain and sky
+  only) offscreen once per variant and shows OK / BLACK per row with the ground colour, plus
+  `window.__probe`: default, the other post mode, classic style, light floor off, atmosphere
+  bypassed, classic indirect, classic toon ramp, NaN guards off, albedo only, each old
+  undefined-behaviour construct switched back on, the driver's math mode (FAST or SAFE), and the
+  terrain shader with one `isnan()` call put back as in s1-2 (rows in yellow are information only). Those
+  rows run with no grass system; the last rows first run the real grass bake, the flower bake, or
+  both, hide the blades and render the terrain again. The two CONTROL rows force a NaN and must
+  read BLACK. Desktop:
+  `xvfb-run -a godot --path . -- --probe=terrain --quit` prints `TERRAIN_PROBE PASS`.
+- `?dbg_terrain=<bits>`: the same switches in the real game (bit values at the top of
+  `shaders/stillwater.gdshaderinc`), e.g. `?dbg_terrain=1024` reproduces the iPhone black ground on
+  desktop and `?dbg_terrain=1` puts the old trail `pow()` back.
 - `?grassdbg=1`: shades grass blades black (0) to white (max) by decoded tallness while leaving the
   ground normal, to verify on-device whether blade tallness decodes as non-zero.
 

@@ -37,10 +37,10 @@ void vertex() {
 		vec3 inv_s2 = vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2]));
 		vec3 card_off = CUSTOM2.xyz;
 		vec3 card_center = VERTEX - card_off;
-		vec3 w_face_n = normalize(m * (CUSTOM1.yzw / inv_s2));
+		vec3 w_face_n = w_normalize(m * (CUSTOM1.yzw / inv_s2));
 		vec3 w_center = (MODEL_MATRIX * vec4(card_center, 1.0)).xyz;
 		vec3 cam = CAMERA_POSITION_WORLD;
-		vec3 to_cam = normalize(cam - w_center);
+		vec3 to_cam = w_normalize(cam - w_center);
 		float ndv = abs(dot(w_face_n, to_cam));
 		// Genshin edge-on card fade: collapse grazing leaf cards completely to zero area so
 		// edge-on slivers never float in open sky or waste fragment overdraw. Visible cards stay
@@ -72,8 +72,8 @@ void vertex() {
 		w_atmosphere(wpos, cam, v_atm_mul, v_atm_add);
 
 		// Spherical crown-dome volumetric lighting evaluated per vertex.
-		vec3 wn = normalize(m * NORMAL);
-		vec3 ln = normalize(m * (NORMAL / inv_s2));
+		vec3 wn = w_normalize(m * NORMAL);
+		vec3 ln = w_normalize(m * (NORMAL / inv_s2));
 		vec3 base_alb = CUSTOM0.rgb * INSTANCE_CUSTOM.rgb;
 		float coreAO = clamp(CUSTOM0.a, 0.26, 1.08);
 		float topG = clamp(CUSTOM1.x, 0.0, 1.0);
@@ -95,10 +95,10 @@ void vertex() {
 		float ramp = w_toon_ramp(dot(ln, sun_dir), 0.48, 0.14, 0.56, camD);
 		vec3 direct = ramp * light_col * sun_vis * volCol / PI;
 		vec3 ind = w_indirect(ln, volCol);
-		vec3 Vw = normalize(wpos - cam);
+		vec3 Vw = w_normalize(wpos - cam);
 		float lit_s = sun_vis * smoothstep(-0.02, 0.08, sun_dir.y);
 		float back = pow(max(dot(Vw, sun_dir), 0.0), 3.6);
-		float rim = pow(1.0 - abs(dot(wn, -Vw)), 2.2);
+		float rim = pow(max(1.0 - abs(dot(wn, -Vw)), 0.0), 2.2);
 		float sunEdge = smoothstep(-0.18, 0.52, dot(wn, sun_dir));
 		vec3 transTint = vec3(0.95, 1.02, 0.68);
 		float edgeMask = 0.35 + 0.65 * coreAO;
@@ -121,7 +121,7 @@ void fragment() {
 	vec2 tsz = UV * 1024.0;
 	vec2 ddx = dFdx(tsz);
 	vec2 ddy = dFdy(tsz);
-	float mip = max(0.0, 0.5 * log2(max(dot(ddx, ddx), dot(ddy, ddy))));
+	float mip = max(0.0, 0.5 * log2(max(max(dot(ddx, ddx), dot(ddy, ddy)), 1e-12)));
 	if (tx.a * (1.0 + mip * 0.30) < v_alpha_cut) {
 		discard;
 	}

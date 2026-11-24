@@ -62,7 +62,8 @@ void vertex() {
 		vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam) + vec3(1e-5, 0.0, 0.0));
 		vec3 upv = cross(toCam, right);
 		vec3 l = vec3(toCam.x * cr - toCam.z * sr, toCam.y, toCam.x * sr + toCam.z * cr);
-		float azF = atan(l.x, l.z);
+		// atan(0, 0) is undefined (the camera straight above the tree).
+		float azF = abs(l.x) + abs(l.z) > 1e-7 ? atan(l.x, l.z) : 0.0;
 		if (azF < 0.0) {
 			azF += 6.2831853;
 		}
@@ -100,7 +101,7 @@ void fragment() {
 	vec2 px = tuv * imp_atlas_px;
 	vec2 ddx = dFdx(px);
 	vec2 ddy = dFdy(px);
-	float lod = clamp(0.5 * log2(max(dot(ddx, ddx), dot(ddy, ddy))), 0.0, imp_grid.w);
+	float lod = clamp(0.5 * log2(max(max(dot(ddx, ddx), dot(ddy, ddy)), 1e-12)), 0.0, imp_grid.w);
 	vec4 alb = textureLod(imp_albedo, tuv, lod);
 	// Keep coverage as the alpha-tested mips average leaves away.
 	if (alb.a * (1.0 + lod * 0.45) < 0.5) {
@@ -108,7 +109,7 @@ void fragment() {
 	}
 	vec4 nrmA = textureLod(imp_normal, tuv, lod);
 	vec3 nrm = nrmA.xyz / max(nrmA.a, 1e-3) * 2.0 - 1.0;
-	vec3 impN = normalize(v_right * nrm.x + v_up * nrm.y + v_to_cam * nrm.z);
+	vec3 impN = w_normalize(v_right * nrm.x + v_up * nrm.y + v_to_cam * nrm.z);
 	vec3 base = alb.rgb / max(alb.a, 1e-3);
 	base *= base;
 	base *= v_tint;
