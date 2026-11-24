@@ -208,31 +208,31 @@ func texture(which: String) -> ImageTexture:
 func collide_trees(pos: Vector2, radius: float) -> Vector2:
 	if col_bytes.is_empty():
 		return pos
-	var cx := floori((pos.x - col_origin) / col_cell)
-	var cz := floori((pos.y - col_origin) / col_cell)
-	for dz in range(-1, 2):
-		var gz := cz + dz
-		if gz < 0 or gz >= col_grid:
-			continue
-		for dx in range(-1, 2):
-			var gx := cx + dx
-			if gx < 0 or gx >= col_grid:
-				continue
-			var c := gz * col_grid + gx
+	# Max tree scale in colliders.bin is 255 / 8 = 31.875 m, so max trunk radius is 0.96 m + radius.
+	var pad := 1.0 + radius
+	var gx0 := maxi(0, floori((pos.x - pad - col_origin) / col_cell))
+	var gx1 := mini(col_grid - 1, floori((pos.x + pad - col_origin) / col_cell))
+	var gz0 := maxi(0, floori((pos.y - pad - col_origin) / col_cell))
+	var gz1 := mini(col_grid - 1, floori((pos.y + pad - col_origin) / col_cell))
+	for gz in range(gz0, gz1 + 1):
+		var row := gz * col_grid
+		for gx in range(gx0, gx1 + 1):
+			var c := row + gx
 			var a := col_bytes.decode_u32(c * 4)
 			var b := col_bytes.decode_u32(c * 4 + 4)
 			for k in range(a, b):
 				var o := col_recs + k * 5
 				var tx := col_bytes.decode_u16(o) / 16.0 + col_origin
 				var tz := col_bytes.decode_u16(o + 2) / 16.0 + col_origin
-				var tr := col_bytes[o + 4] / 8.0 * 0.03 + radius
+				var tr := col_bytes[o + 4] * (0.03 / 8.0) + radius
 				var ex := pos.x - tx
 				var ez := pos.y - tz
 				if absf(ex) >= tr or absf(ez) >= tr:
 					continue
-				var d := sqrt(ex * ex + ez * ez)
-				if d < tr and d > 1e-4:
-					pos = Vector2(tx + ex / d * tr, tz + ez / d * tr)
+				var d2 := ex * ex + ez * ez
+				if d2 < tr * tr and d2 > 1e-8:
+					var inv_d := tr / sqrt(d2)
+					pos = Vector2(tx + ex * inv_d, tz + ez * inv_d)
 	return pos
 
 

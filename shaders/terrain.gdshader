@@ -22,7 +22,6 @@ render_mode unshaded, fog_disabled, cull_back;
 
 uniform float grid_n = 32.0;
 uniform float lod_k = 3.0;
-uniform vec2 cam_xz;
 uniform float cam_dy;
 uniform float skirt_on = 1.0;
 
@@ -75,7 +74,7 @@ void vertex() {
 	float size = INSTANCE_CUSTOM.z;
 	vec2 grid = floor(VERTEX.xz * grid_n + 0.5);
 	vec2 xz = INSTANCE_CUSTOM.xy + VERTEX.xz * size;
-	float d = length(vec2(length(xz - cam_xz), cam_dy));
+	float d = length(vec2(length(xz - CAMERA_POSITION_WORLD.xz), cam_dy));
 	float morph = clamp((d / (lod_k * size) - 1.55) / 0.35, 0.0, 1.0);
 	if (size >= 16384.0) morph = 0.0;
 	vec2 frac_g = fract(grid * 0.5) * 2.0;

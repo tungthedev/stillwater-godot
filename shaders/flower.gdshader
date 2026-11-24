@@ -14,7 +14,6 @@ render_mode unshaded, fog_disabled, cull_disabled, depth_draw_opaque;
 #include "res://shaders/atmosphere.gdshaderinc"
 
 uniform sampler2D atlas : filter_nearest;
-uniform vec2 cam_xz;
 uniform float tile_size = 12.0;
 uniform int slot_w = 32;
 uniform float radius = 22.5;
@@ -35,7 +34,7 @@ void vertex() {
 	if ((flips & 1) != 0) local.x = tile_size - local.x;
 	if ((flips & 2) != 0) local.y = tile_size - local.y;
 	vec2 xz = MODEL_MATRIX[3].xz + local;
-	float dist = length(xz - cam_xz);
+	float dist = length(xz - CAMERA_POSITION_WORLD.xz);
 	vec4 rnd = CUSTOM1;
 	float part = CUSTOM0.w;
 

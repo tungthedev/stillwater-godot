@@ -110,9 +110,22 @@ var stats := {"hero": 0, "mid": 0, "impostor": 0, "near_cells": 0, "far_cells": 
 var last_tris := 0
 var last_draws := 0
 var load_ms := 0
-# Script time of this frame's _process and of its count_drawn (stats only), for the bench.
+# Script time of this frame's _process and sub-parts, for the bench and perf panel.
 var prof_us := 0
+var hero_us := 0
+var mid_us := 0
+var flags_us := 0
+var prefetch_us := 0
 var count_us := 0
+var _lod_gen := 0
+var _count_gen := -1
+var _count_xform := Transform3D.IDENTITY
+var _count_fov := -1.0
+var _count_far := -1.0
+var _count_vp := Vector2.ZERO
+var _count_pl := PackedFloat64Array()
+var _hero_changed := false
+var _mid_changed := false
 
 
 func setup(w: RefCounted) -> void:
@@ -569,10 +582,18 @@ func _cells_in_radius(g: Dictionary, x: float, z: float, enter_r: float, prev: D
 
 
 func _sync(g: Dictionary, batches: Dictionary, active: Dictionary, want: Dictionary, hero: bool, x: float, z: float) -> Vector2i:
+	var set_changed := want.size() != active.size()
 	for key in active:
 		if not want.has(key):
 			_show(batches[key], false, true)
-	active.clear()
+			set_changed = true
+	if not set_changed:
+		for key in want:
+			if not active.has(key):
+				set_changed = true
+				break
+	if set_changed:
+		active.clear()
 	var n := 0
 	var imp := 0
 	for key in want:
@@ -585,9 +606,11 @@ func _sync(g: Dictionary, batches: Dictionary, active: Dictionary, want: Diction
 			var fine: bool = d < mid_fine_r or (bool(b.fine) and d < _exit_radius(mid_fine_r))
 			_set_fine(b, fine)
 		_show(b, true, bush_on)
-		active[key] = true
+		if set_changed:
+			active[key] = true
 		n += b.count if bush_on else b.count - b.bushes
 		imp += b.count - b.bushes
+	_mid_changed = set_changed
 	return Vector2i(n, imp)
 
 
@@ -616,10 +639,12 @@ func _sync_hero(want: Dictionary) -> int:
 				same = false
 				break
 	if same:
+		_hero_changed = false
 		var total_same := 0
 		for v in KINDS.size():
 			total_same += hero_counts[v]
 		return total_same
+	_hero_changed = true
 	_hero_dirty = false
 	hero_active = want.duplicate()
 	var by_kind: Array[PackedInt32Array] = []
@@ -700,10 +725,20 @@ func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	lod_center = cam_pos
 	var hero_want := _cells_in_radius(hero_grid, cam_pos.x, cam_pos.z, hero_r, hero_active)
 	var mid_want := _cells_in_radius(near_grid, cam_pos.x, cam_pos.z, mid_r, mid_active)
+	var th := Time.get_ticks_usec()
 	var h_cnt := _sync_hero(hero_want)
+	var tm := Time.get_ticks_usec()
+	hero_us = tm - th
 	var m := _sync(near_grid, mid_batches, mid_active, mid_want, false, cam_pos.x, cam_pos.z)
-	_write_cell_flags()
+	var tf := Time.get_ticks_usec()
+	mid_us = tf - tm
+	if _hero_changed or _mid_changed or force:
+		_write_cell_flags()
+	var tp := Time.get_ticks_usec()
+	flags_us = tp - tf
 	_plan_prefetch(cam_pos)
+	prefetch_us += Time.get_ticks_usec() - tp
+	_lod_gen += 1
 	stats.hero = h_cnt
 	stats.mid = m.x - h_cnt
 	stats.near_cells = mid_want.size()
@@ -740,10 +775,15 @@ func set_levers(dens: float, dist: float) -> void:
 func set_on(v: bool) -> void:
 	on = v
 	visible = v
+	_lod_gen += 1
+	if not v:
+		last_tris = 0
+		last_draws = 0
 
 
 func set_impostors_on(v: bool) -> void:
 	impostors_on = v
+	_lod_gen += 1
 	for mmi in far_nodes:
 		mmi.visible = v
 
@@ -758,16 +798,38 @@ func set_frozen(v: bool) -> void:
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	hero_us = 0
+	mid_us = 0
+	flags_us = 0
+	prefetch_us = 0
+	count_us = 0
 	if not frozen:
 		var cam := get_viewport().get_camera_3d()
 		if cam != null and count > 0:
 			update_lod(cam.global_position)
-			if on:
+			if on and not _prefetch.is_empty():
+				var tp := Time.get_ticks_usec()
 				_drain_prefetch(t0)
-			var tc := Time.get_ticks_usec()
-			count_drawn(cam)
-			count_us = Time.get_ticks_usec() - tc
+				prefetch_us += Time.get_ticks_usec() - tp
 	prof_us = Time.get_ticks_usec() - t0
+
+
+# On-demand drawn-count stats for the perf readout and bench (not run in normal play frames).
+func ensure_counts(cam: Camera3D) -> void:
+	if cam == null:
+		return
+	var xform := cam.global_transform
+	var vp_sz := cam.get_viewport().get_visible_rect().size
+	if _count_gen == _lod_gen and xform == _count_xform and cam.fov == _count_fov and cam.far == _count_far and vp_sz == _count_vp:
+		return
+	var tc := Time.get_ticks_usec()
+	count_drawn(cam)
+	count_us += Time.get_ticks_usec() - tc
+	_count_gen = _lod_gen
+	_count_xform = xform
+	_count_fov = cam.fov
+	_count_far = cam.far
+	_count_vp = vp_sz
 
 
 # Triangles and draw calls the tree batches submit this frame: every visible batch whose box is
@@ -780,20 +842,31 @@ func count_drawn(cam: Camera3D) -> void:
 	if not on:
 		return
 	var planes := cam.get_frustum()
+	var pn := planes.size()
+	if _count_pl.size() != pn * 4:
+		_count_pl.resize(pn * 4)
+	for i in pn:
+		var pl := planes[i]
+		var n := pl.normal
+		var j := i * 4
+		_count_pl[j] = n.x
+		_count_pl[j + 1] = n.y
+		_count_pl[j + 2] = n.z
+		_count_pl[j + 3] = pl.d
 	for mmi in far_nodes:
-		_count(mmi, planes)
+		_count(mmi, _count_pl)
 	if hero_oaks != null:
-		_count(hero_oaks, planes)
+		_count(hero_oaks, _count_pl)
 	for v in KINDS.size():
-		if hero_counts[v] > 0 and _box_in(planes, hero_aabbs[v]):
+		if hero_counts[v] > 0 and _box_in_pl(_count_pl, hero_aabbs[v]):
 			last_tris += hero_counts[v] * int(mesh_tris[hero_mesh[v]])
 			last_draws += int(mesh_draws.get(hero_mesh[v], 1))
 	for key in mid_active:
 		for mmi: MultiMeshInstance3D in mid_batches[key].nodes:
-			_count(mmi, planes)
+			_count(mmi, _count_pl)
 
 
-func _count(mmi: MultiMeshInstance3D, planes: Array[Plane]) -> void:
+func _count(mmi: MultiMeshInstance3D, pl: PackedFloat64Array) -> void:
 	if not mmi.visible:
 		return
 	var info: Array = _draw_info.get(mmi, [])
@@ -805,16 +878,23 @@ func _count(mmi: MultiMeshInstance3D, planes: Array[Plane]) -> void:
 			int(mesh_draws.get(mm.mesh, 1)),
 		]
 		_draw_info[mmi] = info
-	if not _box_in(planes, info[0]):
+	if not _box_in_pl(pl, info[0]):
 		return
 	last_tris += info[1]
 	last_draws += info[2]
 
 
-static func _box_in(planes: Array[Plane], b: AABB) -> bool:
-	for p in planes:
-		var n := p.normal
-		var c := Vector3(b.position.x if n.x > 0.0 else b.end.x, b.position.y if n.y > 0.0 else b.end.y, b.position.z if n.z > 0.0 else b.end.z)
-		if n.dot(c) - p.d > 0.0:
+static func _box_in_pl(pl: PackedFloat64Array, b: AABB) -> bool:
+	var i := 0
+	var n := pl.size()
+	while i < n:
+		var nx := pl[i]
+		var ny := pl[i + 1]
+		var nz := pl[i + 2]
+		var cx := b.position.x if nx > 0.0 else b.end.x
+		var cy := b.position.y if ny > 0.0 else b.end.y
+		var cz := b.position.z if nz > 0.0 else b.end.z
+		if nx * cx + ny * cy + nz * cz - pl[i + 3] > 0.0:
 			return false
+		i += 4
 	return true

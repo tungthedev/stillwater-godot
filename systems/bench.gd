@@ -66,15 +66,19 @@ var reported := false
 var last_draws := 0
 var last_prims := 0
 
-# Systems whose prof_us (and push_us / count_us where present) the bench sums per frame.
+# Systems whose prof_us (and sub-timers where present) the bench sums per frame.
+const SUB_PROFS: Array[String] = ["select_us", "push_us", "uniform_us", "grass_us", "flowers_us", "hero_us", "mid_us", "flags_us", "prefetch_us", "count_us"]
 var profiled := {}
 var prof_us := 0
+var last_script_us := 0
 var _frame_start_us := 0
 var _pre_draw_us := 0
 var _render_us := -1
 var script_ms: Array[float] = []
 var render_ms: Array[float] = []
 var sys_sums := {}
+var _prof_entries: Array = []
+var _prog_t := 0.0
 
 
 func _ready() -> void:
@@ -98,12 +102,31 @@ func setup(terrain_node: Node, trees_node: Node, grass_node: Node, clouds_node: 
 func start() -> void:
 	running = true
 	FrameTimer.install()
+	_build_prof_entries()
 	stages.clear()
 	stage_i = 0
 	Engine.max_fps = 0
 	if not OS.has_feature("web"):
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	_begin_stage()
+
+
+func _build_prof_entries() -> void:
+	_prof_entries.clear()
+	for k in profiled:
+		var node: Object = profiled[k]
+		if node == null:
+			continue
+		var ks := String(k)
+		_prof_entries.append([ks, node, &"prof_us"])
+		for sub in SUB_PROFS:
+			if node.get(sub) != null:
+				_prof_entries.append(["%s.%s" % [ks, sub.trim_suffix("_us")], node, StringName(sub)])
+
+
+func refresh_counts() -> void:
+	last_draws = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	last_prims = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 
 
 func _begin_stage() -> void:
@@ -122,6 +145,9 @@ func _begin_measure(now: int) -> void:
 	script_ms.clear()
 	render_ms.clear()
 	sys_sums.clear()
+	for e in _prof_entries:
+		sys_sums[e[0]] = 0.0
+	_prog_t = -1.0
 	_render_us = -1
 	FrameTimer.start(Flags.has("nogputimer"))
 	if STAGES[stage_i] == "walk":
@@ -147,11 +173,12 @@ func restart(pose: String) -> void:
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var script_us := t0 - _frame_start_us
-	last_draws = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
-	last_prims = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
+	last_script_us = script_us
 	if running:
+		refresh_counts()
 		_step_bench(script_us)
-	else:
+	elif not reported:
+		refresh_counts()
 		_step_passive(delta)
 	# Outside script_us (this node is last), so it counts as "other"; sampled into the next frame.
 	prof_us = Time.get_ticks_usec() - t0
@@ -163,10 +190,14 @@ func _step_bench(script_us: int) -> void:
 	var el := (now - t0_us) / 1.0e6
 	if not measuring:
 		warm += 1
-		progress = "%s  settling %.0f s" % [stage, maxf(0.0, SETTLE - el)]
+		if el - _prog_t >= 0.25 or _prog_t < 0.0:
+			_prog_t = el
+			progress = "%s  settling %.0f s" % [stage, maxf(0.0, SETTLE - el)]
 		if el >= SETTLE and warm >= WARM_FRAMES:
 			_begin_measure(now)
 		return
+	if frames.size() % 4 == 0:
+		trees_sys.ensure_counts(cam)
 	frames.append((now - last_us) / 1000.0)
 	last_us = now
 	sums.draws += last_draws
@@ -178,17 +209,13 @@ func _step_bench(script_us: int) -> void:
 	# The render span of the previous frame; the first measured frame has none.
 	if _render_us >= 0:
 		render_ms.append(_render_us / 1000.0)
-	for k in profiled:
-		var node: Object = profiled[k]
-		sys_sums[k] = sys_sums.get(k, 0.0) + node.prof_us
-		for sub in ["push_us", "count_us"]:
-			var v = node.get(sub)
-			if v != null:
-				var key := "%s.%s" % [k, sub.trim_suffix("_us")]
-				sys_sums[key] = sys_sums.get(key, 0.0) + v
+	for e in _prof_entries:
+		sys_sums[e[0]] = float(sys_sums[e[0]]) + float((e[1] as Object).get(e[2]))
 	var n := frames.size()
 	var dur := WALK_DUR if stage == "walk" else STOP_DUR
-	progress = "%s  %.1f / %.0f s  %d frames" % [stage, el, dur, n]
+	if el - _prog_t >= 0.25 or _prog_t < 0.0:
+		_prog_t = el
+		progress = "%s  %.1f / %.0f s  %d frames" % [stage, el, dur, n]
 	var done := el >= WALK_DUR if stage == "walk" else ((el >= STOP_DUR and n >= MIN_FRAMES) or el >= STOP_MAX)
 	if not done:
 		return
@@ -265,6 +292,8 @@ func _finish() -> void:
 func _step_passive(delta: float) -> void:
 	t += delta
 	if t > WARMUP and t < WARMUP + WINDOW:
+		if frame_ms.size() % 4 == 0:
+			trees_sys.ensure_counts(cam)
 		frame_ms.append(delta * 1000.0)
 		draws_max = maxi(draws_max, last_draws)
 		prims_max = maxi(prims_max, last_prims)

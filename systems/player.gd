@@ -73,6 +73,16 @@ var _cur_pos := Vector3.ZERO
 var _cur_q := Quaternion.IDENTITY
 # Most sim steps in one frame, and the script time of this frame, for the bench and walk checks.
 var prof_us := 0
+var _k_look := 0.0
+var _k_vel_in := 0.0
+var _k_vel_out := 0.0
+var _k_eye := 0.0
+var _k_sit := 0.0
+var _k_roll := 0.0
+var _k_trail_yaw := 0.0
+var _k_trail_pitch := 0.0
+var _g_pos := Vector2(1e9, 1e9)
+var _g_val := 0.0
 
 
 func setup(w: RefCounted, input_node: Node, camera: Camera3D) -> void:
@@ -86,6 +96,14 @@ func setup(w: RefCounted, input_node: Node, camera: Camera3D) -> void:
 func _ready() -> void:
 	# Before terrain, trees and grass (priority 100) read the camera this frame.
 	process_priority = -10
+	_k_look = 1.0 - exp(-FIXED_DT * 18.0)
+	_k_vel_in = 1.0 - exp(-FIXED_DT * 6.0)
+	_k_vel_out = 1.0 - exp(-FIXED_DT * 8.0)
+	_k_eye = 1.0 - exp(-FIXED_DT * 12.0)
+	_k_sit = 1.0 - exp(-FIXED_DT * 2.2)
+	_k_roll = 1.0 - exp(-FIXED_DT * 4.0)
+	_k_trail_yaw = 1.0 - exp(-FIXED_DT * 1.2)
+	_k_trail_pitch = 1.0 - exp(-FIXED_DT * 0.8)
 
 
 func _on_action(a: String) -> void:
@@ -175,13 +193,14 @@ func _apply(alpha: float) -> void:
 # One fixed step of player.js update().
 func sim_step(dt: float) -> void:
 	t += dt
+	var is_fixed := absf(dt - FIXED_DT) < 1e-6
 	if enabled:
 		var look: Vector2 = input.consume_look()
 		if look != Vector2.ZERO:
 			yaw_t -= look.x
 			pitch_t = clampf(pitch_t - look.y, -1.45, 1.45)
 			last_look = t
-	var sm := 1.0 - exp(-dt * 18.0)
+	var sm := _k_look if is_fixed else (1.0 - exp(-dt * 18.0))
 	yaw += (yaw_t - yaw) * sm
 	pitch += (pitch_t - pitch) * sm
 
@@ -195,10 +214,16 @@ func sim_step(dt: float) -> void:
 	var cy := cos(yaw)
 	var following := auto_walk and sitting.is_empty() and move_mag == 0.0
 	if following:
-		dir = _follow_trail(dt)
+		dir = _follow_trail(dt, is_fixed)
 	elif move_mag > 0.0:
 		dir = Vector2(-sy * fwd + cy * side, -cy * fwd - sy * side).normalized()
-	var g0 := ground(pos.x, pos.y)
+	var g0: float
+	if pos == _g_pos and not ground_override.is_valid():
+		g0 = _g_val
+	else:
+		g0 = ground(pos.x, pos.y)
+		_g_pos = pos
+		_g_val = g0
 	var analog := 1.0 if following else move_mag
 	var speed := (4.6 if jog else 2.1) * (analog if analog > 0.0 else 1.0)
 	var moving := dir != Vector2.ZERO
@@ -213,8 +238,10 @@ func sim_step(dt: float) -> void:
 		if g0 < world.water_level:
 			speed *= 0.55
 	var target := dir * speed
-	vel = vel.lerp(target, 1.0 - exp(-dt * (6.0 if moving else 8.0)))
-	if sitting.is_empty():
+	var kv := (_k_vel_in if moving else _k_vel_out) if is_fixed else (1.0 - exp(-dt * (6.0 if moving else 8.0)))
+	vel = vel.lerp(target, kv)
+	var moved_pos := false
+	if sitting.is_empty() and vel.length_squared() > 1e-10:
 		pos += vel * dt
 		pos = world.collide_trees(pos, RADIUS)
 		for c in colliders:
@@ -225,10 +252,14 @@ func sim_step(dt: float) -> void:
 			if t > _warned_until:
 				_warned_until = t + 8.0
 				toast.emit("The mountains turn you gently back")
+		moved_pos = true
 	var sp := vel.length()
 	speed_now = sp
 	distance += sp * dt
-	var g := ground(pos.x, pos.y)
+	var g: float = ground(pos.x, pos.y) if moved_pos else g0
+	if moved_pos:
+		_g_pos = pos
+		_g_val = g
 	if not is_nan(last_y) and g > last_y:
 		climb += g - last_y
 	last_y = g
@@ -236,20 +267,21 @@ func sim_step(dt: float) -> void:
 	var stride := 1.25 if jog else 0.78
 	bob += sp * dt / stride * PI
 	var bob_amp := minf(1.0, sp / 2.0) * (0.055 if jog else 0.035)
-	var bob_y := -absf(sin(bob)) * bob_amp * 1.4 + bob_amp * 0.7
-	var bob_x := sin(bob) * bob_amp * 0.6
-	var step_sign := signf(sin(bob))
+	var sin_bob := sin(bob)
+	var bob_y := -absf(sin_bob) * bob_amp * 1.4 + bob_amp * 0.7
+	var bob_x := sin_bob * bob_amp * 0.6
+	var step_sign := signf(sin_bob)
 	if step_sign != last_step_sign and sp > 0.5:
 		step.emit(minf(1.2, sp / 2.2))
 	last_step_sign = step_sign
 	var breath := sin(t * 1.6) * 0.008 * (1.0 - minf(1.0, sp))
 
 	var eye_target := g + EYE
-	eye_y += (eye_target - eye_y) * (1.0 - exp(-dt * 12.0))
+	eye_y += (eye_target - eye_y) * (_k_eye if is_fixed else (1.0 - exp(-dt * 12.0)))
 	if absf(eye_target - eye_y) > 3.0:
 		eye_y = eye_target
 
-	sit_blend += ((0.0 if sitting.is_empty() else 1.0) - sit_blend) * (1.0 - exp(-dt * 2.2))
+	sit_blend += ((0.0 if sitting.is_empty() else 1.0) - sit_blend) * (_k_sit if is_fixed else (1.0 - exp(-dt * 2.2)))
 	var p := Vector3(pos.x, eye_y + bob_y + breath, pos.y)
 	if not sitting.is_empty() or sit_blend > 0.001:
 		var s := sitting if not sitting.is_empty() else _last_sit
@@ -259,8 +291,8 @@ func sim_step(dt: float) -> void:
 			if not sitting.is_empty():
 				pos += (Vector2(s.x, s.z) - pos) * 0.02
 	var turn := yaw_t - yaw
-	roll += (-side * 0.012 - turn * 0.05 - roll) * (1.0 - exp(-dt * 4.0))
-	_cur_pos = Vector3(p.x + cos(yaw) * bob_x, p.y, p.z - sin(yaw) * bob_x)
+	roll += (-side * 0.012 - turn * 0.05 - roll) * (_k_roll if is_fixed else (1.0 - exp(-dt * 4.0)))
+	_cur_pos = Vector3(p.x + cy * bob_x, p.y, p.z - sy * bob_x)
 	_cur_q = Basis.from_euler(Vector3(pitch + bob_y * 0.15, yaw, roll), EULER_ORDER_YXZ).get_rotation_quaternion()
 
 
@@ -270,15 +302,21 @@ func _sim_camera() -> void:
 	_cur_q = Basis.from_euler(Vector3(pitch, yaw, roll), EULER_ORDER_YXZ).get_rotation_quaternion()
 
 
-func _follow_trail(dt: float) -> Vector2:
+func _follow_trail(dt: float, is_fixed: bool = true) -> Vector2:
 	var n := trail.size()
 	var bi := trail_idx
 	var bd := 1e18
-	for i in range(maxi(0, trail_idx - 40), mini(n, trail_idx + 60)):
+	for i in range(maxi(0, trail_idx - 4), mini(n, trail_idx + 12)):
 		var d := trail[i].distance_squared_to(pos)
 		if d < bd:
 			bd = d
 			bi = i
+	if bd > 16.0:
+		for i in range(maxi(0, trail_idx - 40), mini(n, trail_idx + 60)):
+			var d := trail[i].distance_squared_to(pos)
+			if d < bd:
+				bd = d
+				bi = i
 	if bd > 400.0:
 		for i in n:
 			var d := trail[i].distance_squared_to(pos)
@@ -291,11 +329,11 @@ func _follow_trail(dt: float) -> Vector2:
 		auto_walk = false
 		toast.emit("You have reached the summit")
 	var to := trail[ti] - pos
-	var dir := to / maxf(to.length(), 1e-6) if to.length() > 0.0 else Vector2(0.0, -1.0)
+	var to_len := to.length()
+	var dir := to / maxf(to_len, 1e-6) if to_len > 0.0 else Vector2(0.0, -1.0)
 	if t - last_look > 3.5:
 		var desired := atan2(-dir.x, -dir.y)
-		var d := desired - yaw_t
-		d = atan2(sin(d), cos(d))
-		yaw_t += d * (1.0 - exp(-dt * 1.2))
-		pitch_t += (-0.04 - pitch_t) * (1.0 - exp(-dt * 0.8))
+		var d := wrapf(desired - yaw_t, -PI, PI)
+		yaw_t += d * (_k_trail_yaw if is_fixed else (1.0 - exp(-dt * 1.2)))
+		pitch_t += (-0.04 - pitch_t) * (_k_trail_pitch if is_fixed else (1.0 - exp(-dt * 0.8)))
 	return dir

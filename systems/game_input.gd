@@ -270,17 +270,18 @@ func _any(codes: Array) -> bool:
 
 # Move axes, x right and y forward, each clamped to [-1, 1].
 func get_move() -> Vector2:
-	if not active or paused:
+	if not active or paused or (_keys.is_empty() and _move_id < 0):
 		return Vector2.ZERO
 	var m := Vector2.ZERO
-	if _any(MOVE_KEYS.forward):
-		m.y += 1.0
-	if _any(MOVE_KEYS.back):
-		m.y -= 1.0
-	if _any(MOVE_KEYS.left):
-		m.x -= 1.0
-	if _any(MOVE_KEYS.right):
-		m.x += 1.0
+	if not _keys.is_empty():
+		if _any(MOVE_KEYS.forward):
+			m.y += 1.0
+		if _any(MOVE_KEYS.back):
+			m.y -= 1.0
+		if _any(MOVE_KEYS.left):
+			m.x -= 1.0
+		if _any(MOVE_KEYS.right):
+			m.x += 1.0
 	if _move_id >= 0:
 		m += _stick
 	return m.clamp(Vector2(-1.0, -1.0), Vector2(1.0, 1.0))
@@ -294,7 +295,7 @@ func consume_look() -> Vector2:
 
 
 func is_held(name: String) -> bool:
-	if not active or paused:
+	if not active or paused or (_holds.is_empty() and _keys.is_empty()):
 		return false
 	if _holds.get(name, false):
 		return true

@@ -182,6 +182,8 @@ func apply_to(mat: ShaderMaterial) -> void:
 
 func set_post(on: bool) -> void:
 	post_on = on
+	if not on:
+		_sky_cam_valid = false
 	for m in mats:
 		m.set_shader_parameter("post_on", 1.0 if on else 0.0)
 
@@ -224,6 +226,10 @@ func set_sky(lut: Texture2D, noise: Texture2D) -> void:
 
 # Script time of this frame's _process, for the bench.
 var prof_us := 0
+var _sky_cam_valid := false
+var _last_view := Vector2.ZERO
+var _last_basis := Basis.IDENTITY
+var _last_fov := -1.0
 
 
 func set_frozen(v: bool) -> void:
@@ -238,11 +244,22 @@ func _process(delta: float) -> void:
 
 
 func _tick(_delta: float) -> void:
-	sky_mat.set_shader_parameter("view_size", get_viewport().get_visible_rect().size)
+	# Sky shader only uses view_size and camera basis for the LDR vignette when post is off.
+	if post_on or sky_flat:
+		return
+	var vs := get_viewport().get_visible_rect().size
+	if not _sky_cam_valid or vs != _last_view:
+		_last_view = vs
+		sky_mat.set_shader_parameter("view_size", vs)
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:
 		var b := cam.global_transform.basis
-		sky_mat.set_shader_parameter("cam_right", b.x)
-		sky_mat.set_shader_parameter("cam_up", b.y)
-		sky_mat.set_shader_parameter("cam_fwd", -b.z)
-		sky_mat.set_shader_parameter("tan_half_fov", tan(deg_to_rad(cam.fov) * 0.5))
+		if not _sky_cam_valid or b != _last_basis:
+			_last_basis = b
+			sky_mat.set_shader_parameter("cam_right", b.x)
+			sky_mat.set_shader_parameter("cam_up", b.y)
+			sky_mat.set_shader_parameter("cam_fwd", -b.z)
+		if not _sky_cam_valid or cam.fov != _last_fov:
+			_last_fov = cam.fov
+			sky_mat.set_shader_parameter("tan_half_fov", tan(deg_to_rad(cam.fov) * 0.5))
+		_sky_cam_valid = true

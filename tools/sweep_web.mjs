@@ -67,6 +67,9 @@ try {
   console.log(`\nSWEEP ${sweep.build}  total=${sweep.total_s}s  order=${(sweep.pose_order || []).join(',')}  internal=${sweep.internal.join('x')} of ${sweep.screen.join('x')}  post=${sweep.post}  target=${sweep.target}${noteStr}`);
   for (const p of sweep.poses) {
     console.log(`\n== ${p.pose}  base ${p.base_start_ms} -> ${p.base_end_ms} ms (drift ${p.drift_ms >= 0 ? '+' : ''}${p.drift_ms}, med ${p.base_median_ms}, cpu ${fmtOpt(p.base_raf_cpu_ms, 1)}, raf ${fmtOpt(p.base_raf_iv_ms, 1)}, scr ${p.base_script_ms}, perf_proc ${p.base_perf_proc_ms}, phys ${p.base_phys_ms}, draws=${p.base_draws}, tris=${p.base_tris})`);
+    if (p.base_sys_ms && Object.keys(p.base_sys_ms).length) {
+      console.log('  sys_ms: ' + Object.entries(p.base_sys_ms).map(([k, v]) => `${k}=${Number(v).toFixed(3)}`).join('  '));
+    }
     console.log('  variant          med_ms  base_ms  delta_ms  delta_%  raf_cpu  raf_iv    scr   phys   draws    tris  gpu_avg');
     for (const v of p.variants) {
       const dMs = `${v.delta_ms >= 0 ? '+' : ''}${v.delta_ms.toFixed(1)}`.padStart(7);

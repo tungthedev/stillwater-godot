@@ -2,18 +2,22 @@ extends Node3D
 
 # Stillwater's quadtree terrain with baked painted ground colour.
 #
-# Every frame the CPU walks a quadtree over the 32 km far map, keeps the nodes in the camera
-# frustum, and splits a node while the camera is closer than LOD_K * size (2 m vertex spacing near
-# the camera). In painterly mode (default), position-only ground colour is baked once into RGBA8:
+# The CPU walks an iterative quadtree over the 32 km far map (skipped when the camera is still or
+# within the padded live-walk thresholds), keeps the nodes in the camera frustum, and splits a node
+# while the camera is closer than LOD_K * size (2 m vertex spacing near the camera).
+#
+# In painterly mode (default), smooth macro ground colour and a forest-floor mask are baked once
+# into RGBA8:
 #   - Near ring: 12 m tiles baked into a 1536 x 1536 SubViewport atlas (12 x 12 = 144 slots of
 #     128 x 128 px; 125 usable intervals + 1 px gutter on every side = 9.6 cm/texel), covering
 #     a 64 m radius (10 m prefetch beyond the 40-54 m fade) with a 4-tile/frame bake budget.
+#     Once all tiles around the camera are baked, bake scheduling sleeps with zero per-frame work
+#     until the camera moves.
 #   - Valley macro: a one-time 1024 x 1024 RGBA8 SubViewport bake over the 4096 m near map
 #     (4 m/texel), used seamlessly beyond the near ring and as an instant fallback until a near
 #     tile finishes baking.
-#   - Far terrain: nodes beyond FAR_SPLIT_DIST or outside the 4 km valley draw with a cheap
-#     2-fetch painted mountain shader + per-pixel atmosphere; near/mid nodes shade lighting,
-#     cloud shadow, forest glades and atmosphere in the vertex shader.
+#   - Far terrain: nodes beyond FAR_SPLIT_DIST or outside the 4 km valley draw with valley + live
+#     trail inside the valley, 2-fetch painted mountains beyond, and per-pixel atmosphere.
 #
 # ?ground=live or ?style=classic switches back to the original single-draw per-pixel shader
 # (shaders/terrain.gdshader) for A/B testing and classic parity.
@@ -22,10 +26,16 @@ const ROOT := 32768.0
 const MIN_SIZE := 64.0
 const N := 32
 const LOD_K := 3.0
+const INIT_NODES := 256
 const MAX_NODES := 1024
 const BOX_MIN_Y := -200.0
 const BOX_MAX_Y := 4400.0
 const SKIRT := true
+# Live walk/turn skip thresholds and strictly wider frustum padding so edge nodes never pop.
+const MOVE_THRESH_SQ := 0.8 * 0.8
+const ROT_COS := 0.999928  # cos(0.012 rad)
+const PAD_M := 0.85
+const PAD_ANG := 0.013
 
 const GROUND_TILE := 12.0
 const GROUND_SLOT_PX := 128
@@ -40,6 +50,7 @@ const GROUND_GRID_W := 16
 const GROUND_BAKE_BUDGET := 4
 const VALLEY_RES := 1024
 const FAR_SPLIT_DIST := 700.0
+const BAKE_WAKE_SQ := 1.0
 
 const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
 const Flags := preload("res://systems/flags.gd")
@@ -55,9 +66,14 @@ var painterly := true
 var on := true
 var frozen := false
 
+var _patch_live: ArrayMesh
+var _patch_near: ArrayMesh
+var _patch_far: ArrayMesh
+var _bounds: AABB
 var draw: SwapMultiMesh
 var draw_near: SwapMultiMesh
 var draw_far: SwapMultiMesh
+var _cap := INIT_NODES
 var buf := PackedFloat32Array()
 var buf_near := PackedFloat32Array()
 var buf_far := PackedFloat32Array()
@@ -68,8 +84,11 @@ var last_near_nodes := 0
 var last_far_nodes := 0
 var last_tris := 0
 var last_draws := 0
+# Script time of this frame's _process and sub-parts, for the bench and perf panel.
 var prof_us := 0
+var select_us := 0
 var push_us := 0
+var uniform_us := 0
 
 # Near-tile and valley macro bake state.
 var valley_vp: SubViewport
@@ -91,14 +110,40 @@ var _baking_n := 0
 var _frame := 0
 var total_bakes := 0
 var ready_slots := 0
+var _bake_settled := false
+var _bake_pos := Vector3(1e9, 0.0, 1e9)
 
+# Per frustum plane: nx, nz, ny * (the box y deepest along the normal) - d, so a node's test reads
+# no Plane objects.
 var _pl := PackedFloat64Array()
+# Iterative traversal stack (max depth for 32768 -> 64 is 9, max stack height 28).
+var _st_x := PackedFloat32Array()
+var _st_z := PackedFloat32Array()
+var _st_s := PackedFloat32Array()
 var _cam_pos := Vector3.ZERO
 var _cam_fwd := Vector2(0.0, -1.0)
 var _dy := 0.0
+var _last_live_dy := -1.0
+var _last_baked_dy := -1.0
+var _last_flat_dy := -1.0
 var _count := 0
 var _near_count := 0
 var _far_count := 0
+var _pushed_count := -1
+var _pushed_near := -1
+var _pushed_far := -1
+var _force_push := true
+var _cam_valid := false
+var _prev_xform := Transform3D.IDENTITY
+var _still_frames := 2
+var _last_xform := Transform3D.IDENTITY
+var _last_pos := Vector3.ZERO
+var _last_fwd := Vector3.FORWARD
+var _last_up := Vector3.UP
+var _last_fov := -1.0
+var _last_far := -1.0
+var _last_vp := Vector2.ZERO
+var _last_pad := false
 
 
 func setup(w: RefCounted) -> void:
@@ -136,33 +181,58 @@ func _ready() -> void:
 	far_mat.set_shader_parameter("valley_ready", 0.0)
 	far_mat.set_shader_parameter("dbg_terrain", int(Flags.value("dbg_terrain", "0")))
 
-	var patch_live := _patch_mesh(N)
-	patch_live.surface_set_material(0, mat)
-	var patch_near := _patch_mesh(N)
-	patch_near.surface_set_material(0, baked_mat)
-	var patch_far := _patch_mesh(N)
-	patch_far.surface_set_material(0, far_mat)
-
-	buf.resize(MAX_NODES * 16)
-	buf_near.resize(MAX_NODES * 16)
-	buf_far.resize(MAX_NODES * 16)
-	for i in MAX_NODES:
-		# Identity transform; the shader reads the node from custom data.
-		for d in [0, 5, 10]:
-			buf[i * 16 + d] = 1.0
-			buf_near[i * 16 + d] = 1.0
-			buf_far[i * 16 + d] = 1.0
-
-	var box := AABB(Vector3(-ROOT * 0.5, BOX_MIN_Y, -ROOT * 0.5), Vector3(ROOT, BOX_MAX_Y - BOX_MIN_Y, ROOT))
-	draw = SwapMultiMesh.new(self, patch_live, MAX_NODES, box)
-	draw_near = SwapMultiMesh.new(self, patch_near, MAX_NODES, box)
-	draw_far = SwapMultiMesh.new(self, patch_far, MAX_NODES, box)
-	_sync_draw_vis()
+	_patch_live = _patch_mesh(N)
+	_patch_live.surface_set_material(0, mat)
+	_patch_near = _patch_mesh(N)
+	_patch_near.surface_set_material(0, baked_mat)
+	_patch_far = _patch_mesh(N)
+	_patch_far.surface_set_material(0, far_mat)
+	_st_x.resize(64)
+	_st_z.resize(64)
+	_st_s.resize(64)
+	# Nodes are culled here on the CPU; Godot must never cull the whole terrain.
+	_bounds = AABB(Vector3(-ROOT * 0.5, BOX_MIN_Y, -ROOT * 0.5), Vector3(ROOT, BOX_MAX_Y - BOX_MIN_Y, ROOT))
+	_init_draws(INIT_NODES)
 
 	var info := atlas_info()
 	print("TERRAIN ground=%s tile=%.0fm texel=%.1fcm atlas=%dx%d (%d slots, %.1fMB) valley=%dx%d (%.1fMB) budget=%d/f" % [
 		ground_mode(), info.tile_m, info.texel_cm, info.atlas_px.x, info.atlas_px.y, info.slots, info.atlas_mb,
 		info.valley_px, info.valley_px, info.valley_mb, info.bake_budget])
+
+
+func _init_draws(cap: int) -> void:
+	_cap = cap
+	var old_n := buf.size() / 16
+	buf.resize(_cap * 16)
+	buf_near.resize(_cap * 16)
+	buf_far.resize(_cap * 16)
+	for i in range(old_n, _cap):
+		# Identity transform; the shader reads the node from custom data.
+		buf[i * 16] = 1.0
+		buf[i * 16 + 5] = 1.0
+		buf[i * 16 + 10] = 1.0
+		buf_near[i * 16] = 1.0
+		buf_near[i * 16 + 5] = 1.0
+		buf_near[i * 16 + 10] = 1.0
+		buf_far[i * 16] = 1.0
+		buf_far[i * 16 + 5] = 1.0
+		buf_far[i * 16 + 10] = 1.0
+	for old_draw in [draw, draw_near, draw_far]:
+		if old_draw != null:
+			for mmi in old_draw.mmis:
+				remove_child(mmi)
+				mmi.queue_free()
+	draw = SwapMultiMesh.new(self, _patch_live, _cap, _bounds)
+	draw_near = SwapMultiMesh.new(self, _patch_near, _cap, _bounds)
+	draw_far = SwapMultiMesh.new(self, _patch_far, _cap, _bounds)
+	if flat_on and flat_mat != null:
+		for mmi in draw.mmis:
+			mmi.material_override = flat_mat
+	_pushed_count = -1
+	_pushed_near = -1
+	_pushed_far = -1
+	_force_push = true
+	_sync_draw_vis()
 
 
 func _make_world_mat(shader_path: String) -> ShaderMaterial:
@@ -297,6 +367,10 @@ func set_live(v: bool) -> void:
 	if v == live_override:
 		return
 	live_override = v
+	_cam_valid = false
+	_force_push = true
+	if use_baked():
+		_bake_settled = false
 	_sync_draw_vis()
 
 
@@ -304,6 +378,10 @@ func set_painterly(v: bool) -> void:
 	if v == painterly:
 		return
 	painterly = v
+	_cam_valid = false
+	_force_push = true
+	if use_baked():
+		_bake_settled = false
 	_sync_draw_vis()
 
 
@@ -337,10 +415,17 @@ func set_flat(v: bool) -> void:
 		flat_mat.set_shader_parameter("grid_n", float(N))
 		flat_mat.set_shader_parameter("lod_k", LOD_K)
 		flat_mat.set_shader_parameter("skirt_on", mat.get_shader_parameter("skirt_on"))
-		flat_mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 		flat_mat.set_shader_parameter("cam_dy", _dy)
+		_last_flat_dy = _dy
+	elif v and flat_mat != null and absf(_dy - _last_flat_dy) > 0.005:
+		flat_mat.set_shader_parameter("cam_dy", _dy)
+		_last_flat_dy = _dy
 	for mmi in draw.mmis:
 		mmi.material_override = flat_mat if v else null
+	_cam_valid = false
+	_force_push = true
+	if use_baked():
+		_bake_settled = false
 	_sync_draw_vis()
 
 
@@ -353,6 +438,9 @@ func set_on(v: bool) -> void:
 		last_far_nodes = 0
 		last_tris = 0
 		last_draws = 0
+	else:
+		_cam_valid = false
+		_force_push = true
 
 
 func is_on() -> bool:
@@ -428,71 +516,221 @@ func _patch_mesh(n: int) -> ArrayMesh:
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	select_us = 0
+	push_us = 0
+	uniform_us = 0
 	var cam := get_viewport().get_camera_3d()
 	if on and not frozen and cam != null:
-		select(cam)
+		select(cam, true)
 	prof_us = Time.get_ticks_usec() - t0
 
 
-func select(cam: Camera3D) -> int:
-	_frame += 1
-	_cam_pos = cam.global_position
-	var fwd3 := -cam.global_transform.basis.z
-	var f2 := Vector2(fwd3.x, fwd3.z)
-	_cam_fwd = f2.normalized() if f2.length_squared() > 1e-6 else Vector2(0.0, -1.0)
-	var planes := cam.get_frustum()
-	_pl.resize(planes.size() * 3)
-	for i in planes.size():
-		var n := planes[i].normal
-		_pl[i * 3] = n.x
-		_pl[i * 3 + 1] = n.z
-		_pl[i * 3 + 2] = n.y * (BOX_MIN_Y if n.y > 0.0 else BOX_MAX_Y) - planes[i].d
-	_dy = maxf(0.0, _cam_pos.y - world.height(_cam_pos.x, _cam_pos.z))
-
+func select(cam: Camera3D, allow_pad: bool = false) -> int:
+	var ts := Time.get_ticks_usec()
+	var xform := cam.global_transform
+	var pos := xform.origin
+	var fwd := -xform.basis.z
+	var up := xform.basis.y
+	var vp_sz := cam.get_viewport().get_visible_rect().size
 	var baked := use_baked()
+
+	# Keep baking while tiles are in flight or the camera moved into new tiles, but do zero work
+	# once all active tiles around the camera are ready and the camera is still.
 	var grid_push_us := 0
 	if baked:
-		grid_push_us = _update_ground_bake()
+		var need_bake := not _bake_settled or not valley_ready or _baking_n > 0 or _grid_dirty or pos.distance_squared_to(_bake_pos) >= BAKE_WAKE_SQ
+		if need_bake:
+			_frame += 1
+			_cam_pos = pos
+			var f2 := Vector2(fwd.x, fwd.z)
+			_cam_fwd = f2.normalized() if f2.length_squared() > 1e-6 else Vector2(0.0, -1.0)
+			grid_push_us = _update_ground_bake()
+
+	if not _cam_valid:
+		_still_frames = 2
+	elif xform == _prev_xform:
+		_still_frames = mini(_still_frames + 1, 2)
+	else:
+		_still_frames = 0
+	_prev_xform = xform
+	var pad := allow_pad and _still_frames < 2
+	if _cam_valid and _last_pad == pad and cam.fov == _last_fov and cam.far == _last_far and vp_sz == _last_vp:
+		if pad:
+			if pos.distance_squared_to(_last_pos) < MOVE_THRESH_SQ and fwd.dot(_last_fwd) >= ROT_COS and up.dot(_last_up) >= ROT_COS:
+				push_us = grid_push_us
+				select_us = Time.get_ticks_usec() - ts - grid_push_us
+				return last_nodes
+		elif xform == _last_xform:
+			push_us = grid_push_us
+			select_us = Time.get_ticks_usec() - ts - grid_push_us
+			return last_nodes
+	_cam_valid = true
+	_last_pad = pad
+	_last_xform = xform
+	_last_pos = pos
+	_last_fwd = fwd
+	_last_up = up
+	_last_fov = cam.fov
+	_last_far = cam.far
+	_last_vp = vp_sz
+
+	_cam_pos = pos
+	var cam_x := pos.x
+	var cam_z := pos.z
+	var planes := cam.get_frustum()
+	var pn := planes.size()
+	if _pl.size() != pn * 3:
+		_pl.resize(pn * 3)
+	for i in pn:
+		var pl := planes[i]
+		var n := pl.normal
+		var d := pl.d
+		if pad:
+			if absf(n.dot(fwd)) < 0.85:
+				n = (n - fwd * PAD_ANG).normalized()
+				d = n.dot(pos) + PAD_M
+			else:
+				d += PAD_M
+		var j := i * 3
+		_pl[j] = n.x
+		_pl[j + 1] = n.z
+		_pl[j + 2] = n.y * (BOX_MIN_Y if n.y > 0.0 else BOX_MAX_Y) - d
+	_dy = maxf(0.0, _cam_pos.y - world.height(cam_x, cam_z))
+	var dy2 := _dy * _dy
+	var pl_len := pn * 3
+	var half_near: float = world.near_size * 0.5
+	var far_split2 := FAR_SPLIT_DIST * FAR_SPLIT_DIST
 
 	_count = 0
 	_near_count = 0
 	_far_count = 0
-	_visit(-ROOT * 0.5, -ROOT * 0.5, ROOT, baked)
+	var changed_live := false
+	var changed_near := false
+	var changed_far := false
+	_st_x[0] = -ROOT * 0.5
+	_st_z[0] = -ROOT * 0.5
+	_st_s[0] = ROOT
+	var sp := 1
+	while sp > 0:
+		sp -= 1
+		var x0 := _st_x[sp]
+		var z0 := _st_z[sp]
+		var size := _st_s[sp]
+		if (not baked and _count >= MAX_NODES) or (baked and (_near_count + _far_count) >= MAX_NODES):
+			break
+		var x1 := x0 + size
+		var z1 := z0 + size
+		var vis := true
+		var pi := 0
+		while pi < pl_len:
+			var nx := _pl[pi]
+			var nz := _pl[pi + 1]
+			if nx * (x0 if nx > 0.0 else x1) + nz * (z0 if nz > 0.0 else z1) + _pl[pi + 2] > 0.0:
+				vis = false
+				break
+			pi += 3
+		if not vis:
+			continue
+		var ddx := x0 - cam_x if cam_x < x0 else (cam_x - x1 if cam_x > x1 else 0.0)
+		var ddz := z0 - cam_z if cam_z < z0 else (cam_z - z1 if cam_z > z1 else 0.0)
+		var d_xz2 := ddx * ddx + ddz * ddz
+		var lim := LOD_K * size
+		if size > MIN_SIZE and d_xz2 + dy2 < lim * lim:
+			var h := size * 0.5
+			_st_x[sp] = x0 + h; _st_z[sp] = z0 + h; _st_s[sp] = h; sp += 1
+			_st_x[sp] = x0;     _st_z[sp] = z0 + h; _st_s[sp] = h; sp += 1
+			_st_x[sp] = x0 + h; _st_z[sp] = z0;     _st_s[sp] = h; sp += 1
+			_st_x[sp] = x0;     _st_z[sp] = z0;     _st_s[sp] = h; sp += 1
+		else:
+			if baked:
+				var in_valley := x0 >= -half_near and x1 <= half_near and z0 >= -half_near and z1 <= half_near
+				if in_valley and size <= 256.0 and d_xz2 < far_split2:
+					if _near_count >= _cap:
+						_init_draws(mini(MAX_NODES, _cap * 2))
+						changed_near = true
+						changed_far = true
+					var kn := _near_count * 16 + 12
+					if buf_near[kn] != x0 or buf_near[kn + 1] != z0 or buf_near[kn + 2] != size:
+						buf_near[kn] = x0
+						buf_near[kn + 1] = z0
+						buf_near[kn + 2] = size
+						buf_near[kn + 3] = 0.0
+						changed_near = true
+					_near_count += 1
+				else:
+					if _far_count >= _cap:
+						_init_draws(mini(MAX_NODES, _cap * 2))
+						changed_near = true
+						changed_far = true
+					var kf := _far_count * 16 + 12
+					if buf_far[kf] != x0 or buf_far[kf + 1] != z0 or buf_far[kf + 2] != size:
+						buf_far[kf] = x0
+						buf_far[kf + 1] = z0
+						buf_far[kf + 2] = size
+						buf_far[kf + 3] = 0.0
+						changed_far = true
+					_far_count += 1
+			else:
+				if _count >= _cap:
+					_init_draws(mini(MAX_NODES, _cap * 2))
+					changed_live = true
+				var k := _count * 16 + 12
+				if buf[k] != x0 or buf[k + 1] != z0 or buf[k + 2] != size:
+					buf[k] = x0
+					buf[k + 1] = z0
+					buf[k + 2] = size
+					buf[k + 3] = 0.0
+					changed_live = true
+				_count += 1
 
 	var tp := Time.get_ticks_usec()
-	var cam_xz := Vector2(_cam_pos.x, _cam_pos.z)
+	select_us = tp - ts - grid_push_us
 	if baked:
 		draw.set_visible(false)
 		if _near_count > 0:
 			draw_near.set_visible(on)
-			draw_near.push(buf_near, _near_count)
+			if changed_near or _near_count != _pushed_near or _force_push:
+				draw_near.push(buf_near, _near_count)
+				_pushed_near = _near_count
 		else:
 			draw_near.set_visible(false)
 		if _far_count > 0:
 			draw_far.set_visible(on)
-			draw_far.push(buf_far, _far_count)
+			if changed_far or _far_count != _pushed_far or _force_push:
+				draw_far.push(buf_far, _far_count)
+				_pushed_far = _far_count
 		else:
 			draw_far.set_visible(false)
-		baked_mat.set_shader_parameter("cam_xz", cam_xz)
-		baked_mat.set_shader_parameter("cam_dy", _dy)
-		far_mat.set_shader_parameter("cam_xz", cam_xz)
-		far_mat.set_shader_parameter("cam_dy", _dy)
+		_force_push = false
 		last_draws = (1 if _near_count > 0 else 0) + (1 if _far_count > 0 else 0)
 	else:
 		draw_near.set_visible(false)
 		draw_far.set_visible(false)
 		if _count > 0:
 			draw.set_visible(on)
-			draw.push(buf, _count)
+			if changed_live or _count != _pushed_count or _force_push:
+				draw.push(buf, _count)
+				_pushed_count = _count
 		else:
 			draw.set_visible(false)
-		mat.set_shader_parameter("cam_xz", cam_xz)
-		mat.set_shader_parameter("cam_dy", _dy)
-		if flat_on and flat_mat != null:
-			flat_mat.set_shader_parameter("cam_xz", cam_xz)
-			flat_mat.set_shader_parameter("cam_dy", _dy)
+		_force_push = false
 		last_draws = 1 if _count > 0 else 0
-	push_us = Time.get_ticks_usec() - tp + grid_push_us
+
+	var tu := Time.get_ticks_usec()
+	push_us = tu - tp + grid_push_us
+	if baked:
+		if absf(_dy - _last_baked_dy) > 0.005:
+			baked_mat.set_shader_parameter("cam_dy", _dy)
+			far_mat.set_shader_parameter("cam_dy", _dy)
+			_last_baked_dy = _dy
+	else:
+		if absf(_dy - _last_live_dy) > 0.005:
+			mat.set_shader_parameter("cam_dy", _dy)
+			_last_live_dy = _dy
+		if flat_on and flat_mat != null and absf(_dy - _last_flat_dy) > 0.005:
+			flat_mat.set_shader_parameter("cam_dy", _dy)
+			_last_flat_dy = _dy
+	uniform_us = Time.get_ticks_usec() - tu
 	last_near_nodes = _near_count
 	last_far_nodes = _far_count
 	last_nodes = (_near_count + _far_count) if baked else _count
@@ -630,6 +868,12 @@ func _update_ground_bake() -> int:
 		baked_mat.set_shader_parameter("ground_grid_origin", Vector2(float(_grid_ox), float(_grid_oz)))
 		_grid_dirty = false
 		upload_us = Time.get_ticks_usec() - tu
+
+	if valley_ready and _baking_n == 0 and missing.is_empty() and not _grid_dirty:
+		_bake_settled = true
+		_bake_pos = _cam_pos
+	else:
+		_bake_settled = false
 	return upload_us
 
 
@@ -648,58 +892,3 @@ func _pick_ground_slot(active: Dictionary, cx: float, cz: float) -> Dictionary:
 			best_d = d
 			best = s
 	return best
-
-
-func _visit(x0: float, z0: float, size: float, baked: bool) -> void:
-	if (not baked and _count >= MAX_NODES) or (baked and (_near_count + _far_count) >= MAX_NODES) or not _box_visible(x0, z0, size):
-		return
-	var ddx := maxf(maxf(x0 - _cam_pos.x, 0.0), _cam_pos.x - (x0 + size))
-	var ddz := maxf(maxf(z0 - _cam_pos.z, 0.0), _cam_pos.z - (z0 + size))
-	var d_xz2 := ddx * ddx + ddz * ddz
-	var d := sqrt(d_xz2 + _dy * _dy)
-	if size > MIN_SIZE and d < LOD_K * size:
-		var h := size * 0.5
-		_visit(x0, z0, h, baked)
-		_visit(x0 + h, z0, h, baked)
-		_visit(x0, z0 + h, h, baked)
-		_visit(x0 + h, z0 + h, h, baked)
-	else:
-		if baked:
-			var half_near: float = world.near_size * 0.5
-			var in_valley := x0 >= -half_near and (x0 + size) <= half_near and z0 >= -half_near and (z0 + size) <= half_near
-			if in_valley and size <= 256.0 and d_xz2 < FAR_SPLIT_DIST * FAR_SPLIT_DIST:
-				var kn := _near_count * 16 + 12
-				buf_near[kn] = x0
-				buf_near[kn + 1] = z0
-				buf_near[kn + 2] = size
-				buf_near[kn + 3] = 0.0
-				_near_count += 1
-			else:
-				var kf := _far_count * 16 + 12
-				buf_far[kf] = x0
-				buf_far[kf + 1] = z0
-				buf_far[kf + 2] = size
-				buf_far[kf + 3] = 0.0
-				_far_count += 1
-		else:
-			var k := _count * 16 + 12
-			buf[k] = x0
-			buf[k + 1] = z0
-			buf[k + 2] = size
-			buf[k + 3] = 0.0
-			_count += 1
-
-
-# Frustum planes point outward: a box is out when its corner deepest along a plane's normal
-# is still in front of that plane.
-func _box_visible(x0: float, z0: float, size: float) -> bool:
-	var i := 0
-	while i < _pl.size():
-		var nx := _pl[i]
-		var nz := _pl[i + 1]
-		var cx := x0 if nx > 0.0 else x0 + size
-		var cz := z0 if nz > 0.0 else z0 + size
-		if nx * cx + nz * cz + _pl[i + 2] > 0.0:
-			return false
-		i += 3
-	return true
