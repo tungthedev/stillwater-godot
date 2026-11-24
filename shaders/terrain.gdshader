@@ -31,9 +31,9 @@ uniform vec4 waterfall = vec4(-893.95, 132.59, 118.0, 58.0);
 
 varying vec3 wpos;
 
-// x * x. pow() with a negative base is undefined in GLSL: desktop drivers square it, strict
-// compilers (Metal without fast math) return NaN, and one NaN in the trail colour blacks out the
-// whole ground because mix() carries it even at weight 0.
+// x * x. pow() with a negative base is undefined in GLSL: desktop drivers square it, Metal in
+// safe-math mode (see w_denan) returns NaN, and one NaN in the trail colour blacks out the whole
+// ground because mix() carries it even at weight 0.
 float t_sq(float x) {
 	if (DBG(DBG_NAN_POW)) {
 		return x < 0.0 ? uintBitsToFloat(2143289344u) : x * x;

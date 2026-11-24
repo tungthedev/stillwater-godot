@@ -61,8 +61,12 @@ float w_rstep(float hi, float lo, float x) {
 }
 
 // NaN -> fallback. The bit test is integer work, which a fast-math compiler cannot fold away the
-// way it may fold isnan(). isnan() stays as well: every shader that renders correctly on iPhone was
-// compiled with it, and its presence may decide how strictly the driver compiles the rest.
+// way it may fold isnan().
+// isnan() is more than a test here: ANGLE's Metal backend (Safari) compiles any shader that calls
+// isnan() or isinf() with safe math instead of fast math, so every shader including this file
+// follows IEEE rules on iPhone and undefined GLSL (pow of a negative base, ...) gives real NaNs.
+// It stays, because that is the mode all of these shaders are known to render in on the phone;
+// ?probe=terrain's "no isnan" rows show what dropping it (W_NO_ISNAN) would do.
 vec3 w_denan(vec3 c, vec3 fallback) {
 	if (DBG(DBG_NO_GUARD)) {
 		return c;
