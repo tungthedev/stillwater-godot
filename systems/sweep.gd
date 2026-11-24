@@ -14,6 +14,7 @@ const FrameTimer := preload("res://systems/frame_timer.gd")
 const Flags := preload("res://systems/flags.gd")
 
 const DEFAULT_POSES: Array[String] = ["trailhead", "forest"]
+const SUB_PROFS: Array[String] = ["select_us", "push_us", "uniform_us", "grass_us", "flowers_us", "hero_us", "mid_us", "flags_us", "prefetch_us", "count_us"]
 const POSE_WARMUP_S := 1.5
 const POSE_WARMUP_FRAMES := 24
 const SWITCH_SETTLE_S := 0.10
@@ -32,10 +33,13 @@ var cam: Camera3D
 var ui_sys: Node
 var bench_sys: Node
 var settings: Callable
+var profiled: Dictionary = {}
 
 var running := false
 var progress := ""
 var prof_us := 0
+var _prof_entries: Array = []
+var _sys_sums: Dictionary = {}
 
 var _poses: Array[String] = []
 var _pose_i := 0
@@ -72,8 +76,8 @@ var _base_shadow := false
 
 
 func _ready() -> void:
-	# Last in the frame, matching bench.gd, so script_us spans every other node's _process.
-	process_priority = 1 << 30
+	# Strictly after bench.gd (1 << 30), so script_us and bench.prof_us cover the full frame.
+	process_priority = (1 << 30) + 1
 	get_tree().process_frame.connect(func() -> void: _frame_start_us = Time.get_ticks_usec())
 	FrameTimer.install()
 
@@ -89,6 +93,19 @@ func setup(nodes: Dictionary) -> void:
 	ui_sys = nodes.get("ui", null)
 	bench_sys = nodes.get("bench", null)
 	settings = nodes.settings
+	profiled = nodes.get("profiled", {})
+
+
+func _build_prof_entries() -> void:
+	_prof_entries.clear()
+	for k in profiled:
+		var node: Object = profiled[k]
+		if node == null:
+			continue
+		_prof_entries.append([String(k), node, &"prof_us"])
+		for sub in SUB_PROFS:
+			if node.get(sub) != null:
+				_prof_entries.append(["%s.%s" % [k, sub.trim_suffix("_us")], node, StringName(sub)])
 
 
 func start() -> void:
@@ -103,6 +120,7 @@ func start() -> void:
 	_base_trees = trees_sys.is_on()
 	_base_clouds = clouds_sys.is_on()
 	_base_shadow = env_sys.sun != null and env_sys.sun.shadow_enabled
+	_build_prof_entries()
 	_poses = _pick_poses()
 	_build_variants()
 	_pose_i = 0
@@ -316,6 +334,9 @@ func _begin_measure(now: int) -> void:
 	_script_ms.clear()
 	_proc_ms.clear()
 	_phys_ms.clear()
+	_sys_sums.clear()
+	for e in _prof_entries:
+		_sys_sums[e[0]] = 0.0
 	_draws_sum = 0.0
 	_tris_sum = 0.0
 	_draws_n = 0
@@ -362,6 +383,8 @@ func _step(script_us: int) -> void:
 	_script_ms.append(maxf(0.0, float(script_us) / 1000.0))
 	_proc_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	_phys_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+	for e in _prof_entries:
+		_sys_sums[e[0]] = float(_sys_sums[e[0]]) + float((e[1] as Object).get(e[2]))
 	if not _frozen_step or _draws_n == 0:
 		_draws_sum += RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
 		_tris_sum += RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
@@ -427,6 +450,7 @@ func _window_stats(step: Dictionary, dur_s: float, timing: Dictionary, raf: Dict
 		"script_ms": snappedf(_median_sorted(scr_s), 0.01),
 		"perf_proc_ms": snappedf(_median_sorted(proc_s), 0.01),
 		"phys_ms": snappedf(_median_sorted(phys_s), 0.01),
+		"sys_ms": _sys_avgs(n),
 		"draws": roundi(_draws_sum / maxf(1.0, float(_draws_n))),
 		"tris": roundi(_tris_sum / maxf(1.0, float(_draws_n))),
 		"internal": [post.internal.x, post.internal.y],
@@ -450,6 +474,7 @@ func _finish_pose() -> void:
 	var base_scrs: Array[float] = []
 	var base_procs: Array[float] = []
 	var base_physs: Array[float] = []
+	var base_sys_acc: Dictionary = {}
 	for rec in _step_records:
 		if rec.kind == "base":
 			base_samples.append(rec)
@@ -461,6 +486,9 @@ func _finish_pose() -> void:
 			base_scrs.append(float(rec.script_ms))
 			base_procs.append(float(rec.perf_proc_ms))
 			base_physs.append(float(rec.phys_ms))
+			var sm: Dictionary = rec.get("sys_ms", {})
+			for sk in sm:
+				base_sys_acc[sk] = float(base_sys_acc.get(sk, 0.0)) + float(sm[sk])
 	var rows: Array[Dictionary] = []
 	var additive_save := 0.0
 	for k in _variants.size():
@@ -497,6 +525,12 @@ func _finish_pose() -> void:
 	base_scrs.sort()
 	base_procs.sort()
 	base_physs.sort()
+	var base_sys_ms := {}
+	var bn := maxf(1.0, float(base_samples.size()))
+	var skeys := base_sys_acc.keys()
+	skeys.sort_custom(func(a: String, b: String) -> bool: return float(base_sys_acc[a]) > float(base_sys_acc[b]))
+	for sk in skeys:
+		base_sys_ms[sk] = snappedf(float(base_sys_acc[sk]) / bn, 0.001)
 	_pose_results.append({
 		"pose": pose,
 		"base_start_ms": snappedf(base_start, 0.01),
@@ -507,6 +541,7 @@ func _finish_pose() -> void:
 		"base_script_ms": snappedf(_median_sorted(base_scrs), 0.01),
 		"base_perf_proc_ms": snappedf(_median_sorted(base_procs), 0.01),
 		"base_phys_ms": snappedf(_median_sorted(base_physs), 0.01),
+		"base_sys_ms": base_sys_ms,
 		"drift_ms": snappedf(base_end - base_start, 0.01),
 		"additive_save_ms": snappedf(additive_save, 0.01),
 		"additive_share_pct": snappedf((additive_save / maxf(base_med, 0.001)) * 100.0, 0.1),
@@ -537,6 +572,16 @@ func _finish_all() -> void:
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval("window.__sweep = JSON.parse(%s);" % JSON.stringify(line))
 	finished.emit(result)
+
+
+func _sys_avgs(n: int) -> Dictionary:
+	var keys := _sys_sums.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool: return float(_sys_sums[a]) > float(_sys_sums[b]))
+	var out := {}
+	var div := maxf(1.0, float(n)) * 1000.0
+	for k in keys:
+		out[k] = snappedf(float(_sys_sums[k]) / div, 0.001)
+	return out
 
 
 static func _median_sorted(s: Array) -> float:

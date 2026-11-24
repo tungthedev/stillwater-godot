@@ -32,9 +32,11 @@ var buf := PackedFloat32Array()
 var tris_per_node := 0
 var last_nodes := 0
 var last_tris := 0
-# Script time of this frame's _process and of its instance push, for the bench.
+# Script time of this frame's _process and sub-parts, for the bench and perf panel.
 var prof_us := 0
+var select_us := 0
 var push_us := 0
+var uniform_us := 0
 # Per frustum plane: nx, nz, ny * (the box y deepest along the normal) - d, so a node's test reads
 # no Plane objects.
 var _pl := PackedFloat64Array()
@@ -191,6 +193,9 @@ func _patch_mesh(n: int) -> ArrayMesh:
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	select_us = 0
+	push_us = 0
+	uniform_us = 0
 	var cam := get_viewport().get_camera_3d()
 	if on and not frozen and cam != null:
 		select(cam)
@@ -198,6 +203,7 @@ func _process(_delta: float) -> void:
 
 
 func select(cam: Camera3D) -> int:
+	var ts := Time.get_ticks_usec()
 	_cam_pos = cam.global_position
 	var planes := cam.get_frustum()
 	_pl.resize(planes.size() * 3)
@@ -210,13 +216,16 @@ func select(cam: Camera3D) -> int:
 	_count = 0
 	_visit(-ROOT * 0.5, -ROOT * 0.5, ROOT)
 	var tp := Time.get_ticks_usec()
+	select_us = tp - ts
 	draw.push(buf, _count)
-	push_us = Time.get_ticks_usec() - tp
+	var tu := Time.get_ticks_usec()
+	push_us = tu - tp
 	mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 	mat.set_shader_parameter("cam_dy", _dy)
 	if flat_on and flat_mat != null:
 		flat_mat.set_shader_parameter("cam_xz", Vector2(_cam_pos.x, _cam_pos.z))
 		flat_mat.set_shader_parameter("cam_dy", _dy)
+	uniform_us = Time.get_ticks_usec() - tu
 	last_nodes = _count
 	last_tris = _count * tris_per_node
 	return _count

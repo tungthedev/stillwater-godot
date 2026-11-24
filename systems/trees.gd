@@ -110,8 +110,12 @@ var stats := {"hero": 0, "mid": 0, "impostor": 0, "near_cells": 0, "far_cells": 
 var last_tris := 0
 var last_draws := 0
 var load_ms := 0
-# Script time of this frame's _process and of its count_drawn (stats only), for the bench.
+# Script time of this frame's _process and sub-parts, for the bench and perf panel.
 var prof_us := 0
+var hero_us := 0
+var mid_us := 0
+var flags_us := 0
+var prefetch_us := 0
 var count_us := 0
 
 
@@ -700,10 +704,18 @@ func update_lod(cam_pos: Vector3, force: bool = false) -> void:
 	lod_center = cam_pos
 	var hero_want := _cells_in_radius(hero_grid, cam_pos.x, cam_pos.z, hero_r, hero_active)
 	var mid_want := _cells_in_radius(near_grid, cam_pos.x, cam_pos.z, mid_r, mid_active)
+	var th := Time.get_ticks_usec()
 	var h_cnt := _sync_hero(hero_want)
+	var tm := Time.get_ticks_usec()
+	hero_us = tm - th
 	var m := _sync(near_grid, mid_batches, mid_active, mid_want, false, cam_pos.x, cam_pos.z)
+	var tf := Time.get_ticks_usec()
+	mid_us = tf - tm
 	_write_cell_flags()
+	var tp := Time.get_ticks_usec()
+	flags_us = tp - tf
 	_plan_prefetch(cam_pos)
+	prefetch_us += Time.get_ticks_usec() - tp
 	stats.hero = h_cnt
 	stats.mid = m.x - h_cnt
 	stats.near_cells = mid_want.size()
@@ -758,12 +770,19 @@ func set_frozen(v: bool) -> void:
 
 func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	hero_us = 0
+	mid_us = 0
+	flags_us = 0
+	prefetch_us = 0
+	count_us = 0
 	if not frozen:
 		var cam := get_viewport().get_camera_3d()
 		if cam != null and count > 0:
 			update_lod(cam.global_position)
 			if on:
+				var tp := Time.get_ticks_usec()
 				_drain_prefetch(t0)
+				prefetch_us += Time.get_ticks_usec() - tp
 			var tc := Time.get_ticks_usec()
 			count_drawn(cam)
 			count_us = Time.get_ticks_usec() - tc

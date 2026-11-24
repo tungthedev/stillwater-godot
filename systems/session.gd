@@ -142,8 +142,9 @@ func _unhandled_input(e: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	hud.prof_us = 0
 	_tick(delta)
-	prof_us = Time.get_ticks_usec() - t0
+	prof_us = maxi(0, (Time.get_ticks_usec() - t0) - hud.prof_us)
 
 
 func _tick(delta: float) -> void:
@@ -167,7 +168,9 @@ func _tick(delta: float) -> void:
 	var dt := minf(delta, 0.05)
 	t += dt
 	fade += (fade_target - fade) * (1.0 - exp(-dt * (TITLE_FADE_IN if fade_target > fade else FADE_OUT)))
+	var tf := Time.get_ticks_usec()
 	hud.set_fade(fade)
+	hud.prof_us += Time.get_ticks_usec() - tf
 	if mode == "title" or (mode == "transition" and not _placed):
 		_title_cam(t)
 	if mode == "transition" and fade_target == 0.0 and fade < 0.02 and not _placed:
@@ -190,12 +193,14 @@ func _tick(delta: float) -> void:
 	if mode == "play":
 		_check_pois()
 	var p: Vector2 = player.pos
+	var th := Time.get_ticks_usec()
 	hud.update({
 		"yaw": player.yaw, "altitude": world.height(cam.position.x, cam.position.z), "hours": hours,
 		"distance": player.distance, "climb": player.climb, "pois": pois, "pos": p,
 		"bench": player.sitting.is_empty() and not player.nearest_bench().is_empty(),
 		"sitting": not player.sitting.is_empty(), "auto_walk": player.auto_walk,
 	})
+	hud.prof_us += Time.get_ticks_usec() - th
 
 
 # Checks only: ?spawn=x,z,yaw starts the walk elsewhere (tools/free_walk_check.mjs legs).

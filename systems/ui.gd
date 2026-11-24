@@ -31,6 +31,10 @@ var dev_on := true
 var _showing_sweep := false
 var _panel_sb: StyleBoxFlat
 var frozen := false
+var _scr_line := ""
+var _scr_ema := {}
+var _scr_tot_ema := 0.0
+var _scr_t := 0.0
 
 var dist_i := 0
 var dens_i := 0
@@ -61,6 +65,8 @@ func _ready() -> void:
 	layer = 10
 	label = _label(11, Color.WHITE)
 	label.position = Vector2(8, 8)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size = Vector2(374, 0)
 	add_child(label)
 	progress = _label(20, Color(1.0, 0.95, 0.6))
 	progress.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -414,6 +420,9 @@ func _show_sweep_results(r: Dictionary) -> void:
 			_opt_ms(p.get("base_raf_cpu_ms", -1.0)), _opt_ms(p.get("base_raf_iv_ms", -1.0)),
 			float(p.get("base_script_ms", 0.0)), float(p.get("base_phys_ms", 0.0))]
 		panel_box.add_child(_text(hdr, 9, Color(0.96, 0.90, 0.62)))
+		var bsys: Dictionary = p.get("base_sys_ms", {})
+		if not bsys.is_empty():
+			panel_box.add_child(_text(_format_sys_line("scr", float(p.get("base_script_ms", 0.0)), bsys), 8, Color(0.76, 0.84, 0.94)))
 		var tbl := VBoxContainer.new()
 		tbl.add_theme_constant_override("separation", 0)
 		tbl.add_child(_row(["variant", "med", "Δms", "%", "cpu", "raf", "scr"], 9, Color(0.68, 0.74, 0.82), WIDTHS_SWEEP))
@@ -491,7 +500,57 @@ func _process(delta: float) -> void:
 	prof_us = Time.get_ticks_usec() - t0
 
 
-func _tick(_delta: float) -> void:
+static func _format_sys_line(prefix: String, total_ms: float, sys: Dictionary) -> String:
+	var order: Array[String] = ["terrain", "grass", "trees", "sky", "post", "ui", "player", "session", "hud", "camera", "bench"]
+	var parts := PackedStringArray()
+	for k in order:
+		if not sys.has(k):
+			continue
+		var v := float(sys[k])
+		if v < 0.005 and k not in ["terrain", "grass", "trees", "sky", "post", "ui"]:
+			continue
+		var detail := ""
+		if k == "terrain":
+			detail = _sub_str(sys, [["terrain.select", "sel"], ["terrain.push", "psh"], ["terrain.uniform", "uni"]])
+		elif k == "grass":
+			detail = _sub_str(sys, [["grass.grass", "g"], ["grass.flowers", "f"], ["grass.push", "psh"]])
+		elif k == "trees":
+			detail = _sub_str(sys, [["trees.hero", "h"], ["trees.mid", "m"], ["trees.flags", "flg"], ["trees.prefetch", "pre"], ["trees.count", "cnt"]])
+		parts.append("%s %.2f%s" % [k, v, detail])
+	return "%s %.2f ms: %s" % [prefix, total_ms, " · ".join(parts)]
+
+
+static func _sub_str(sys: Dictionary, specs: Array) -> String:
+	var out := PackedStringArray()
+	for sp in specs:
+		var v := float(sys.get(sp[0], 0.0))
+		if v >= 0.005:
+			out.append("%s %.2f" % [sp[1], v])
+	return (" (%s)" % " ".join(out)) if not out.is_empty() else ""
+
+
+func _update_scr_line(delta: float) -> void:
+	_scr_t += delta
+	if _scr_t < 0.25 and _scr_line != "":
+		return
+	_scr_t = 0.0
+	var a := 0.35 if _scr_line != "" else 1.0
+	_scr_tot_ema = lerpf(_scr_tot_ema, float(bench_sys.last_script_us) / 1000.0, a)
+	for k in bench_sys.profiled:
+		var node: Object = bench_sys.profiled[k]
+		if node == null:
+			continue
+		var ks := String(k)
+		_scr_ema[ks] = lerpf(float(_scr_ema.get(ks, 0.0)), float(node.prof_us) / 1000.0, a)
+		for sub in bench_sys.SUB_PROFS:
+			var v = node.get(sub)
+			if v != null:
+				var sk := "%s.%s" % [ks, sub.trim_suffix("_us")]
+				_scr_ema[sk] = lerpf(float(_scr_ema.get(sk, 0.0)), float(v) / 1000.0, a)
+	_scr_line = _format_sys_line("scr", _scr_tot_ema, _scr_ema)
+
+
+func _tick(delta: float) -> void:
 	if sweep_sys != null and sweep_sys.running:
 		progress.text = "Sweep  " + sweep_sys.progress
 	elif bench_sys.running:
@@ -500,6 +559,7 @@ func _tick(_delta: float) -> void:
 		progress.text = ""
 	if not dev_on:
 		return
-	label.text = "%d fps  %d x %d of %d x %d  post %s  style %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)" % [
+	_update_scr_line(delta)
+	label.text = "%d fps  %d x %d of %d x %d  post %s  style %s\n%d draws  %.2f M tris (terrain %.2f, trees %.2f, grass %.2f)\n%s" % [
 		Engine.get_frames_per_second(), post.internal.x, post.internal.y, post.screen.x, post.screen.y, "on" if post.is_on() else "off", env_sys.style,
-		bench_sys.last_draws, bench_sys.last_prims / 1.0e6, terrain_sys.last_tris / 1.0e6, trees_sys.last_tris / 1.0e6, grass_sys.last_tris / 1.0e6]
+		bench_sys.last_draws, bench_sys.last_prims / 1.0e6, terrain_sys.last_tris / 1.0e6, trees_sys.last_tris / 1.0e6, grass_sys.last_tris / 1.0e6, _scr_line]

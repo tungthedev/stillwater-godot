@@ -66,9 +66,11 @@ var reported := false
 var last_draws := 0
 var last_prims := 0
 
-# Systems whose prof_us (and push_us / count_us where present) the bench sums per frame.
+# Systems whose prof_us (and sub-timers where present) the bench sums per frame.
+const SUB_PROFS: Array[String] = ["select_us", "push_us", "uniform_us", "grass_us", "flowers_us", "hero_us", "mid_us", "flags_us", "prefetch_us", "count_us"]
 var profiled := {}
 var prof_us := 0
+var last_script_us := 0
 var _frame_start_us := 0
 var _pre_draw_us := 0
 var _render_us := -1
@@ -147,6 +149,7 @@ func restart(pose: String) -> void:
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var script_us := t0 - _frame_start_us
+	last_script_us = script_us
 	last_draws = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
 	last_prims = RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 	if running:
@@ -181,7 +184,7 @@ func _step_bench(script_us: int) -> void:
 	for k in profiled:
 		var node: Object = profiled[k]
 		sys_sums[k] = sys_sums.get(k, 0.0) + node.prof_us
-		for sub in ["push_us", "count_us"]:
+		for sub in SUB_PROFS:
 			var v = node.get(sub)
 			if v != null:
 				var key := "%s.%s" % [k, sub.trim_suffix("_us")]

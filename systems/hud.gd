@@ -74,6 +74,7 @@ var blockers: Array = []
 var _touch_btns := {}
 var _touch_fire_ms := {}
 var _stick_shown := false
+var prof_us := 0
 
 
 func _ready() -> void:

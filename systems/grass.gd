@@ -60,6 +60,9 @@ var last_draws := 0
 var density := 1.0
 var prof_us := 0
 var push_us := 0
+var grass_us := 0
+var flowers_us := 0
+var uniform_us := 0
 # This frame's work, for walk checks: tiles that entered, ring selection and entry time.
 var detail := {}
 
@@ -152,6 +155,9 @@ func _process(_delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	var cam := get_viewport().get_camera_3d()
 	push_us = 0
+	grass_us = 0
+	flowers_us = 0
+	uniform_us = 0
 	if _on and not frozen and cam != null:
 		_frame += 1
 		update_rings(cam, false)
@@ -163,22 +169,30 @@ func update_rings(cam: Camera3D, assume_baked: bool) -> void:
 	var planes := cam.get_frustum()
 	var p := cam.global_position
 	var cxz := Vector2(p.x, p.z)
+	var tu := Time.get_ticks_usec()
 	# The walker stands under the camera, so blades part around the camera's feet as in the game.
 	grass.draw_mat.set_shader_parameter("cam_xz", cxz)
 	grass.draw_mat.set_shader_parameter("player_xz", cxz)
 	flowers.draw_mat.set_shader_parameter("cam_xz", cxz)
+	uniform_us = Time.get_ticks_usec() - tu
 	if _grass_on and update_grass:
+		var tg := Time.get_ticks_usec()
 		grass.update(p, planes, _frame, assume_baked)
+		grass_us = Time.get_ticks_usec() - tg
 	elif not _grass_on:
 		grass.last_tris = 0
 		grass.last_draws = 0
 		grass.push_us = 0
+		grass_us = 0
 	if _flowers_on and update_flowers:
+		var tf := Time.get_ticks_usec()
 		flowers.update(p, planes, _frame, assume_baked)
+		flowers_us = Time.get_ticks_usec() - tf
 	elif not _flowers_on:
 		flowers.last_tris = 0
 		flowers.last_draws = 0
 		flowers.push_us = 0
+		flowers_us = 0
 	last_tris = grass.last_tris + flowers.last_tris
 	last_draws = grass.last_draws + flowers.last_draws
 	push_us = grass.push_us + flowers.push_us
