@@ -1,0 +1,57 @@
+{
+ "note": "Replicated in Node from capture.js applyCaptureParams + player.update (not read back from a browser run). Camera y also gets breath = sin(t*1.6)*0.008 m per frame, ignored here.",
+ "timeOfDayHours": 16,
+ "eyeHeight": 1.68,
+ "fovVerticalDeg": 60,
+ "near": 0.25,
+ "far": 60000,
+ "convention": "three.js and Godot are both right-handed, Y up, camera looks down -Z. rotation = (pitch, yaw, roll) applied in YXZ order, which is Godot Camera3D default rotation_order.",
+ "stops": {
+  "trailhead": {
+   "name": "trailhead",
+   "query": "trailf=0&time=16",
+   "trailIndex": 0,
+   "position": [
+    648,
+    147.55222290039063,
+    856
+   ],
+   "ground": 145.87222290039062,
+   "yaw": 0.12123538317003556,
+   "pitch": -0.02,
+   "roll": 0,
+   "eulerOrder": "YXZ",
+   "lookAt": [
+    646.7908557221062,
+    147.3522362334573,
+    846.0753853753264
+   ],
+   "collisionPushM": 0,
+   "distToHouseM": 67.51818826363404,
+   "distToNearestBenchM": 866.3707079396057
+  },
+  "forest": {
+   "name": "forest",
+   "query": "poi=forest&pitch=0.03&time=16",
+   "trailIndex": 1451,
+   "position": [
+    -536.0231323242188,
+    214.47929406916447,
+    -374.22796630859375
+   ],
+   "ground": 212.79929406916446,
+   "yaw": 1.0365426027544369,
+   "pitch": 0.03,
+   "roll": 0,
+   "eulerOrder": "YXZ",
+   "lookAt": [
+    -544.6257484127219,
+    214.7792490711894,
+    -379.3176640825864
+   ],
+   "collisionPushM": 0,
+   "distToHouseM": 1642.2852092896105,
+   "distToNearestBenchM": 224.33089179589697
+  }
+ }
+}

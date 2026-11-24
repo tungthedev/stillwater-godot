@@ -1,0 +1,226 @@
+{
+ "format": 1,
+ "region": "valley",
+ "worldHash": "fnv64:f70dbd7cdb4c443a",
+ "stillwaterCommit": "a5863f48dc1afdcbc9626e7496a075d640223ffa",
+ "stillwaterDirty": [],
+ "units": "metres; world origin at the centre of both height grids; +x east, +z south (three.js), y up",
+ "near": {
+  "file": "height_near.f32",
+  "type": "f32le",
+  "size": 4096,
+  "res": 2048,
+  "layout": "row-major, index = iz * res + ix; texel (ix, iz) centre is at x = (ix + 0.5) / res * size - size / 2 (same for z)",
+  "sample": "bilinear: fx = (x / size + 0.5) * res - 0.5, clamped to [0, res - 1.001] (HeightField._sample)"
+ },
+ "far": {
+  "file": "height_far.f32",
+  "type": "f32le",
+  "size": 32768,
+  "res": 2048,
+  "layout": "same as near"
+ },
+ "heightRules": {
+  "gameplay": "WorldData.height(x, z) samples the near map only, clamped at its edge; tree y and player eye use it",
+  "render": "GPU w_height: t = smoothstep(size/2 - 220, size/2 - 20, max(|x|, |z|)) = smoothstep(1828, 2028, ...); height = mix(near, far, t)",
+  "blendStart": 1828,
+  "blendEnd": 2028
+ },
+ "trailMask": {
+  "file": "trail_mask.i16",
+  "type": "i16le",
+  "res": 2048,
+  "scale": 0.00003051850947599719,
+  "layout": "same grid as near",
+  "use": "trailAt = |bilinear(mask)|, isPath = bilinear(mask) > 0.4"
+ },
+ "biome": {
+  "res": 512,
+  "size": 4096,
+  "rgb": {
+   "file": "biome_rgb.u8",
+   "layout": "row-major, 3 bytes per texel: r forest (u8 copy), g flowers, b meadow; value / 255"
+  },
+  "forest": {
+   "file": "biome_forest.f32",
+   "type": "f32le",
+   "range": [
+    0,
+    1
+   ]
+  },
+  "sample": "nearest: ix = clamp(floor((x / size + 0.5) * res), 0, res - 1), same for z"
+ },
+ "trees": {
+  "count": 163391,
+  "file": "trees.f32",
+  "layout": "planar f32le: field f of tree i at index f * count + i",
+  "fields": [
+   "x",
+   "y",
+   "z",
+   "s",
+   "rot",
+   "sx",
+   "tint_r",
+   "tint_g",
+   "tint_b"
+  ],
+  "rank": {
+   "file": "trees_rank.u16",
+   "type": "u16le",
+   "rule": "rank = value / 65536; tier keeps rank < density, i.e. value < density * 65536"
+  },
+  "kind": {
+   "file": "trees_kind.u8",
+   "values": [
+    "oak",
+    "round",
+    "pine",
+    "bush",
+    "poplar",
+    "larch"
+   ],
+   "bush": "kind 3"
+  },
+  "salt": {
+   "file": "trees_salt.u8"
+  },
+  "instance": "scale (s * sx, s, s * sx), rotate rot about +Y, translate (x, y, z); y = WorldData.height - 0.25 (bush - 0.15)",
+  "collision": "non-bush trees block within s * 0.03 + 0.4 m (WorldData.collideTrees), full canonical list on every tier"
+ },
+ "rocks": {
+  "count": 1122,
+  "file": "rocks.f32",
+  "layout": "planar f32le, as trees",
+  "fields": [
+   "x",
+   "y",
+   "z",
+   "s",
+   "rot",
+   "tilt_x",
+   "tilt_z"
+  ],
+  "rank": {
+   "file": "rocks_rank.u16",
+   "type": "u16le",
+   "rule": "as trees, density = tier.rocks"
+  },
+  "kind": {
+   "file": "rocks_kind.u8"
+  }
+ },
+ "heroOaks": {
+  "file": "extras.json",
+  "count": 4,
+  "instance": "y = WorldData.height - 0.35, scale (s * 0.94, s, s * 0.94), mesh hero_oak"
+ },
+ "tiers": {
+  "low": {
+   "trees": 0.55,
+   "treeDetail": 1,
+   "treeHi": 70,
+   "treeLo": 380,
+   "rocks": 1,
+   "expectedTrees": 90010,
+   "expectedRocks": 1122
+  },
+  "medium": {
+   "trees": 0.8,
+   "treeDetail": 2,
+   "treeHi": 120,
+   "treeLo": 600,
+   "rocks": 1,
+   "expectedTrees": 130871,
+   "expectedRocks": 1122
+  },
+  "high": {
+   "trees": 1,
+   "treeDetail": 2,
+   "treeHi": 230,
+   "treeLo": 780,
+   "rocks": 1,
+   "expectedTrees": 163391,
+   "expectedRocks": 1122
+  },
+  "ultra": {
+   "trees": 1,
+   "treeDetail": 2,
+   "treeHi": 230,
+   "treeLo": 780,
+   "rocks": 1,
+   "expectedTrees": 163391,
+   "expectedRocks": 1122
+  }
+ },
+ "waterLevel": 22,
+ "lake": {
+  "x": -150,
+  "z": 200,
+  "rx": 340,
+  "rz": 230
+ },
+ "valley": {
+  "x": -200,
+  "z": -150
+ },
+ "summit": {
+  "x": -760,
+  "z": -780
+ },
+ "start": {
+  "x": 640,
+  "z": 860
+ },
+ "boundary": {
+  "value": 1850,
+  "rule": "soft square: if max(|x|, |z|) > boundary, scale (x, z) by boundary / max"
+ },
+ "files": {
+  "paths": "paths.json",
+  "extras": "extras.json",
+  "samples": "samples.json",
+  "poses": "poses.json",
+  "meshes": "meshes.json"
+ },
+ "sizes": {
+  "height_near.f32": 16777216,
+  "height_far.f32": 16777216,
+  "trail_mask.i16": 8388608,
+  "biome_rgb.u8": 786432,
+  "biome_forest.f32": 1048576,
+  "trees.f32": 5882076,
+  "trees_rank.u16": 326782,
+  "trees_kind.u8": 163391,
+  "trees_salt.u8": 163391,
+  "rocks.f32": 31416,
+  "rocks_rank.u16": 2244,
+  "rocks_kind.u8": 1122,
+  "extras.json": 2374,
+  "paths.json": 280898,
+  "samples.json": 4828,
+  "poses.json": 1491,
+  "meshes/oak_hi.bin": 394096,
+  "meshes/oak_mid.bin": 281656,
+  "meshes/oak_lo.bin": 221352,
+  "meshes/round_hi.bin": 328576,
+  "meshes/round_mid.bin": 231016,
+  "meshes/round_lo.bin": 178152,
+  "meshes/pine_hi.bin": 574816,
+  "meshes/pine_mid.bin": 511328,
+  "meshes/pine_lo.bin": 462584,
+  "meshes/bush_hi.bin": 125104,
+  "meshes/bush_mid.bin": 111216,
+  "meshes/bush_lo.bin": 100800,
+  "meshes/poplar_hi.bin": 250856,
+  "meshes/poplar_mid.bin": 196296,
+  "meshes/poplar_lo.bin": 163752,
+  "meshes/larch_hi.bin": 241008,
+  "meshes/larch_mid.bin": 211992,
+  "meshes/larch_lo.bin": 190768,
+  "meshes/hero_oak.bin": 394096,
+  "meshes.json": 20096,
+  "atlas.png": 445251
+ }
+}
