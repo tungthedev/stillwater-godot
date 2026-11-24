@@ -3,6 +3,8 @@
 // exposure, fog, cloud offset). Uses Stillwater's own Chrome launcher (GPU check included).
 // Run under gpu-run against your own Stillwater dev server:
 //   BASE=http://127.0.0.1:<port>/ gpu-run node tools/shoot_stillwater.mjs [--stillwater <path>] [--out captures/slice2]
+//     [--keep trees,...]   leave these systems on (the ones Godot has drawn so far)
+//     [--shots-only]       only the reference frames: no light values, no sky LUT rewrite
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,7 +17,9 @@ const BASE = (process.env.BASE || '').replace(/\/?$/, '/');
 if (!process.env.BASE) throw new Error('set BASE to your Stillwater dev server');
 const W = 675, H = 1130;
 // Everything that is not terrain or sky. Ferns, logs, light shafts and the stream have no switch.
-const NO = 'grass,trees,clouds,rocks,props,birds,motes,fly,spray,mist';
+const KEEP = argVal('--keep', '').split(',').filter(Boolean);
+const SHOTS_ONLY = args.includes('--shots-only');
+const NO = ['grass', 'trees', 'clouds', 'rocks', 'props', 'birds', 'motes', 'fly', 'spray', 'mist'].filter((s) => !KEEP.includes(s)).join(',');
 const poses = JSON.parse(fs.readFileSync(path.resolve('data/valley/poses.json'), 'utf8'));
 
 const { launchBrowser } = await import(pathToFileURL(path.join(SW, 'tools/chrome.mjs')).href);
@@ -34,6 +38,11 @@ try {
     if (err) throw new Error(err);
     const file = path.join(OUT, `stillwater_${stop.name}.png`);
     await page.screenshot({ path: file });
+    console.log(stop.name, file);
+    if (SHOTS_ONLY) {
+      await page.close();
+      continue;
+    }
     values[stop.name] = await page.evaluate(() => {
       const g = window.__game, U = g.U;
       const v3 = (v) => [v.x ?? v.r, v.y ?? v.g, v.z ?? v.b];
@@ -68,12 +77,12 @@ try {
         return { w, h, half, rgb };
       });
     }
-    console.log(stop.name, file);
     await page.close();
   }
 } finally {
   await browser.close();
 }
+if (SHOTS_ONLY) process.exit(0);
 // Rows as read back: row 0 is the bottom of the LUT (three's v = 0), which is also Godot's
 // v = 0 row, so both engines sample it with the same uv.
 const lut = values.skyLut;
