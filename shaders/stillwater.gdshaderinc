@@ -4,9 +4,8 @@
 // tonemapper with exposure 1, and the Compatibility renderer writes these unshaded/sky outputs to
 // the screen unconverted, so they end with Stillwater's own sRGB encode.
 //
-// Noon (hour 16.0) keeps sky_analytic = 0.0 and uses the prebaked sky_lut_16h.rgbh identically;
-// other presets (golden, dawn, dusk, night, mist) blend to a cheap Genshin-style analytic sky ramp
-// so time-of-day switches cost uniforms only (zero LUT or radiance-map rebuilds).
+// Every time-of-day preset uses the analytic sky ramp (sky_analytic = 1), so switches cost uniforms
+// only (zero LUT or radiance-map rebuilds). The sky LUT path stays for sky_analytic < 1.
 
 uniform sampler2D sky_lut : filter_linear, repeat_disable;
 // Trilinear, not anisotropic: Stillwater's reference frames show the mip-blurred pattern at distance.
@@ -23,7 +22,8 @@ uniform float painterly = 1.0;
 uniform vec3 horizon_tint = vec3(0.95, 0.99, 1.07);
 uniform float sky_sat = 1.38;
 uniform float horizon_haze = 0.34;
-// Time-of-day analytic sky & celestial controls (0 at noon so sky_lut_16h stays exact).
+// Time-of-day analytic sky & celestial controls. With sky_analytic = 1, w_sky_base returns the
+// ramp as is, so sky_sat, horizon_tint and horizon_haze only act on the LUT path.
 uniform float sky_analytic = 0.0;
 uniform vec3 sky_zenith_col = vec3(0.18, 0.42, 0.92);
 uniform vec3 sky_mid_col = vec3(0.45, 0.68, 1.05);
@@ -223,12 +223,14 @@ vec3 godot_out(vec3 v) {
 vec3 w_grade_ldr(vec3 col, vec2 screen_uv, vec2 viewport) {
 	col = styl_tone(col * exposure * grade_wb);
 	if (day_fresh_k > 0.001) {
+		// Film greens: pull yellow-greens toward true green and a little darker. Gated on green
+		// leading red, so wheat, flowers and flags (red >= green) keep their hue.
 		float mx = max(col.r, max(col.g, col.b));
 		float mn = min(col.r, min(col.g, col.b));
 		float chroma = mx - mn;
-		float is_green = smoothstep(0.01, 0.09, col.g - max(col.r * 0.84, col.b)) * smoothstep(0.02, 0.14, chroma);
-		float day_fresh = is_green * smoothstep(0.16, 0.45, mx);
-		col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45 * day_fresh_k);
+		float is_green = smoothstep(-0.01, 0.05, col.g - col.r) * smoothstep(0.0, 0.04, col.g - col.b) * smoothstep(0.01, 0.08, chroma);
+		float gk = is_green * day_fresh_k;
+		col = max(col + vec3(-0.34, -0.04, 0.10) * chroma * gk, 0.0) * (1.0 - 0.22 * gk);
 	}
 	float Lg = w_luma(col);
 	vec3 s_tint = painterly > 0.5 ? grade_shadow_tint : shadow_tint;

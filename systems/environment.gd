@@ -2,10 +2,10 @@ extends Node3D
 
 # Sun, moon, sky, atmosphere and mood ramps shared by every shader (W5).
 #
-# Noon (hour 16.0) keeps sky_analytic = 0.0 and uses the prebaked sky_lut_16h.rgbh identically
-# to the baseline, guaranteeing zero noon drift. The other presets (golden, dawn, dusk, night,
-# mist) and continuous diurnal hours blend to a cheap Genshin-style analytic sky + fog + grade
-# ramp via uniforms only: zero per-frame LUT rebuilds, zero radiance-map rebuilds, zero ground
+# Every preset, noon included, uses the analytic sky (sky_analytic = 1.0): the prebaked
+# sky_lut_16h.rgbh cannot be recoloured to the film-like pale cyan noon sky without a rebake, and
+# the analytic ramp costs no texture read. Presets and continuous diurnal hours blend the sky,
+# fog and grade via uniforms only: zero per-frame LUT rebuilds, zero radiance-map rebuilds, zero ground
 # re-bakes. Every preset honours S1's light floor so foliage and terrain never crush to black.
 
 const Flags := preload("res://systems/flags.gd")
@@ -19,25 +19,35 @@ const EXPOSURE := 0.6
 const DEFAULT_TIME_SCALE := 6.0 # 6 game-minutes per real minute (1 full day in 24 real min)
 
 # Painterly palette at hour 16 (noon default).
-const PAINTERLY_HEMI_SKY := Vector3(0.41, 0.58, 0.94)
-const PAINTERLY_HEMI_GROUND := Vector3(0.34, 0.35, 0.56)
-const PAINTERLY_SHADOW_TINT := Vector3(0.92, 0.92, 1.20)
+const PAINTERLY_HEMI_SKY := Vector3(0.42, 0.62, 0.80)
+const PAINTERLY_HEMI_GROUND := Vector3(0.30, 0.36, 0.30)
+const PAINTERLY_SHADOW_TINT := Vector3(0.94, 1.02, 0.98)
 const PAINTERLY_AMBIENT_BOOST := 1.12
-const PAINTERLY_LIGHT_FLOOR_COL := Vector3(0.42, 0.50, 0.72)
+const PAINTERLY_LIGHT_FLOOR_COL := Vector3(0.40, 0.52, 0.50)
 const PAINTERLY_LIGHT_FLOOR := 0.45
 const PAINTERLY_HORIZON_TINT := Vector3(0.95, 0.99, 1.07)
 const PAINTERLY_SKY_SAT := 1.38
 const PAINTERLY_HORIZON_HAZE := 0.34
 const PAINTERLY_DIRECT_SCALE := 0.96
 const CLOUD_LIT_COL := Vector3(2.55, 2.38, 2.15)
-const CLOUD_SHADOW_COL := Vector3(0.62, 0.78, 1.32)
+const CLOUD_SHADOW_COL := Vector3(0.70, 0.82, 0.98)
 const CLOUD_RIM_COL := Vector3(3.10, 2.65, 1.95)
-const DEFAULT_FOG_BETA := Vector3(2.4e-5, 4.6e-5, 1.18e-4)
+const DEFAULT_FOG_BETA := Vector3(3.0e-5, 4.4e-5, 7.0e-5)
 const DEFAULT_MIST := 0.028
 const DEFAULT_CLOUD_COVER := 0.329
-const DEFAULT_GRADE_SHADOW_TINT := Vector3(0.88, 0.90, 1.20)
-const DEFAULT_GRADE_SHADOW_CAST := Vector3(0.93, 0.92, 1.14)
-const DEFAULT_GRADE_LIFT := Vector3(0.006, 0.006, 0.016)
+const DEFAULT_GRADE_SHADOW_TINT := Vector3(0.80, 0.98, 0.86)
+const DEFAULT_GRADE_SHADOW_CAST := Vector3(0.88, 1.04, 0.94)
+const DEFAULT_GRADE_LIFT := Vector3(0.002, 0.004, 0.003)
+
+# Noon sky and grade (hour 16). Pale cyan sky, deep green-tinted shadows and more contrast, after
+# the stills of "When Marnie Was There".
+const NOON_SKY_ZENITH := Vector3(0.70, 1.60, 2.40)
+const NOON_SKY_MID := Vector3(1.42, 2.32, 2.76)
+const NOON_SKY_HORIZON := Vector3(2.86, 3.35, 3.35)
+const NOON_SKY_GLOW := Vector3(0.35, 0.30, 0.22)
+const NOON_GRADE_SAT := 0.96
+const NOON_GRADE_CONTRAST := 0.50
+const NOON_EXPOSURE := 0.52
 
 const TOD_PRESETS: Array[String] = ["noon", "golden", "dawn", "dusk", "night", "mist"]
 
@@ -85,12 +95,12 @@ var moon_vis := 0.0
 var night_weight := 0.0
 var night_glow := 0.0
 var mist_weight := 0.0
-var exposure := EXPOSURE
-var sky_analytic := 0.0
-var sky_zenith_col := Vector3(0.18, 0.42, 0.92)
-var sky_mid_col := Vector3(0.45, 0.68, 1.05)
-var sky_horizon_col := Vector3(0.95, 1.02, 1.14)
-var sky_glow_col := Vector3(0.65, 0.52, 0.35)
+var exposure := NOON_EXPOSURE
+var sky_analytic := 1.0
+var sky_zenith_col := NOON_SKY_ZENITH
+var sky_mid_col := NOON_SKY_MID
+var sky_horizon_col := NOON_SKY_HORIZON
+var sky_glow_col := NOON_SKY_GLOW
 
 var hemi_sky := PAINTERLY_HEMI_SKY
 var hemi_ground := PAINTERLY_HEMI_GROUND
@@ -113,8 +123,8 @@ var grade_wb := Vector3.ONE
 var grade_shadow_tint := DEFAULT_GRADE_SHADOW_TINT
 var grade_shadow_cast := DEFAULT_GRADE_SHADOW_CAST
 var grade_lift_u := DEFAULT_GRADE_LIFT
-var grade_sat_u := 1.12
-var grade_contrast_u := 0.08
+var grade_sat_u := NOON_GRADE_SAT
+var grade_contrast_u := NOON_GRADE_CONTRAST
 var day_fresh_k := 1.0
 
 var sky_mat: ShaderMaterial
@@ -177,7 +187,7 @@ static func sun_colours(dir: Vector3) -> Array[Vector3]:
 	return [sc, lc]
 
 
-# Six Genshin-inspired mood presets honouring S1's light floor (foliage & ground never crush black).
+# Six mood presets graded after the stills of "When Marnie Was There", honouring S1's light floor (foliage & ground never crush black).
 static func _preset_spec(name: String) -> Dictionary:
 	var noon_dir := sun_direction(HOURS)
 	var noon_cols := sun_colours(noon_dir)
@@ -187,26 +197,26 @@ static func _preset_spec(name: String) -> Dictionary:
 			return {
 				"hours": 18.35, "sun_dir": d, "sun_col": Vector3(1.10, 0.62, 0.24),
 				"light_col": Vector3(6.85, 3.85, 1.65), "sun_disc_vis": 1.0, "moon_vis": 0.0,
-				"night_weight": 0.0, "night_glow": 0.32, "mist_weight": 0.0, "exposure": 0.62,
+				"night_weight": 0.0, "night_glow": 0.32, "mist_weight": 0.0, "exposure": 0.6,
 				"sky_analytic": 1.0,
-				"sky_zenith_col": Vector3(0.22, 0.42, 0.88),
-				"sky_mid_col": Vector3(0.56, 0.64, 0.94),
-				"sky_horizon_col": Vector3(1.62, 0.92, 0.46),
-				"sky_glow_col": Vector3(1.85, 0.86, 0.30),
-				"hemi_sky": Vector3(0.46, 0.50, 0.80), "hemi_ground": Vector3(0.44, 0.34, 0.38),
-				"shadow_ambient_tint": Vector3(0.92, 0.85, 1.16), "ambient_boost": 1.14,
-				"light_floor_col": Vector3(0.48, 0.44, 0.64), "light_floor": 0.46,
+				"sky_zenith_col": Vector3(0.22, 0.4, 0.8),
+				"sky_mid_col": Vector3(0.62, 0.62, 0.76),
+				"sky_horizon_col": Vector3(1.8, 0.98, 0.44),
+				"sky_glow_col": Vector3(2.1, 0.96, 0.3),
+				"hemi_sky": Vector3(0.54, 0.5, 0.56), "hemi_ground": Vector3(0.44, 0.36, 0.26),
+				"shadow_ambient_tint": Vector3(1.04, 0.94, 0.84), "ambient_boost": 1.14,
+				"light_floor_col": Vector3(0.54, 0.45, 0.36), "light_floor": 0.46,
 				"horizon_tint": Vector3(1.06, 0.94, 0.84), "sky_sat": 1.32, "horizon_haze": 0.44,
 				"cloud_lit_col": Vector3(2.85, 2.05, 1.35),
-				"cloud_shadow_col": Vector3(0.68, 0.62, 1.05),
+				"cloud_shadow_col": Vector3(0.72, 0.6, 0.62),
 				"cloud_rim_col": Vector3(3.60, 2.25, 1.05),
-				"fog_beta": Vector3(2.8e-5, 5.2e-5, 1.15e-4), "mist": 0.045, "valley_mist_mult": 1.25,
+				"fog_beta": Vector3(3.6e-5, 4.6e-5, 5.8e-5), "mist": 0.045, "valley_mist_mult": 1.25,
 				"cloud_cover": 0.35,
-				"grade_wb": Vector3(1.04, 1.00, 0.94),
-				"grade_shadow_tint": Vector3(0.90, 0.87, 1.18),
-				"grade_shadow_cast": Vector3(0.95, 0.90, 1.12),
-				"grade_lift_u": Vector3(0.008, 0.006, 0.014),
-				"grade_sat_u": 1.15, "grade_contrast_u": 0.09, "day_fresh_k": 0.60,
+				"grade_wb": Vector3(1.07, 1.0, 0.9),
+				"grade_shadow_tint": Vector3(1.02, 0.92, 0.78),
+				"grade_shadow_cast": Vector3(1.04, 0.94, 0.82),
+				"grade_lift_u": Vector3(0.004, 0.003, 0.003),
+				"grade_sat_u": 0.85, "grade_contrast_u": 0.4, "day_fresh_k": 0.15,
 			}
 		"dawn":
 			var d := sun_direction(5.55)
@@ -215,24 +225,24 @@ static func _preset_spec(name: String) -> Dictionary:
 				"light_col": Vector3(4.80, 3.25, 2.35), "sun_disc_vis": 1.0, "moon_vis": 0.12,
 				"night_weight": 0.08, "night_glow": 0.35, "mist_weight": 0.35, "exposure": 0.65,
 				"sky_analytic": 1.0,
-				"sky_zenith_col": Vector3(0.18, 0.32, 0.76),
-				"sky_mid_col": Vector3(0.48, 0.56, 0.92),
-				"sky_horizon_col": Vector3(1.52, 0.98, 0.86),
-				"sky_glow_col": Vector3(1.55, 0.88, 0.62),
-				"hemi_sky": Vector3(0.44, 0.48, 0.78), "hemi_ground": Vector3(0.36, 0.34, 0.48),
-				"shadow_ambient_tint": Vector3(0.94, 0.88, 1.18), "ambient_boost": 1.16,
-				"light_floor_col": Vector3(0.46, 0.46, 0.68), "light_floor": 0.48,
+				"sky_zenith_col": Vector3(0.3, 0.5, 0.8),
+				"sky_mid_col": Vector3(0.64, 0.74, 0.9),
+				"sky_horizon_col": Vector3(1.62, 1.02, 0.7),
+				"sky_glow_col": Vector3(1.8, 0.92, 0.48),
+				"hemi_sky": Vector3(0.44, 0.54, 0.68), "hemi_ground": Vector3(0.34, 0.36, 0.32),
+				"shadow_ambient_tint": Vector3(0.96, 0.98, 0.98), "ambient_boost": 1.16,
+				"light_floor_col": Vector3(0.44, 0.49, 0.47), "light_floor": 0.48,
 				"horizon_tint": Vector3(1.04, 0.95, 0.98), "sky_sat": 1.28, "horizon_haze": 0.48,
 				"cloud_lit_col": Vector3(2.40, 1.85, 1.65),
-				"cloud_shadow_col": Vector3(0.56, 0.58, 0.98),
+				"cloud_shadow_col": Vector3(0.62, 0.66, 0.82),
 				"cloud_rim_col": Vector3(3.10, 2.10, 1.55),
-				"fog_beta": Vector3(3.4e-5, 5.2e-5, 1.10e-4), "mist": 0.068, "valley_mist_mult": 1.45,
+				"fog_beta": Vector3(3.4e-5, 4.8e-5, 7.5e-5), "mist": 0.068, "valley_mist_mult": 1.45,
 				"cloud_cover": 0.36,
-				"grade_wb": Vector3(1.02, 0.99, 1.01),
-				"grade_shadow_tint": Vector3(0.90, 0.88, 1.20),
-				"grade_shadow_cast": Vector3(0.95, 0.91, 1.15),
-				"grade_lift_u": Vector3(0.008, 0.007, 0.018),
-				"grade_sat_u": 1.12, "grade_contrast_u": 0.07, "day_fresh_k": 0.45,
+				"grade_wb": Vector3(1.04, 0.99, 0.97),
+				"grade_shadow_tint": Vector3(0.86, 0.96, 0.9),
+				"grade_shadow_cast": Vector3(0.92, 1.0, 0.94),
+				"grade_lift_u": Vector3(0.004, 0.005, 0.005),
+				"grade_sat_u": 1.05, "grade_contrast_u": 0.35, "day_fresh_k": 0.7,
 			}
 		"dusk":
 			var d := sun_direction(19.55)
@@ -243,88 +253,87 @@ static func _preset_spec(name: String) -> Dictionary:
 				"light_col": Vector3(2.85, 1.52, 0.98), "sun_disc_vis": 0.85, "moon_vis": 0.45,
 				"night_weight": 0.38, "night_glow": 0.90, "mist_weight": 0.15, "exposure": 0.72,
 				"sky_analytic": 1.0,
-				"sky_zenith_col": Vector3(0.09, 0.13, 0.38),
-				"sky_mid_col": Vector3(0.30, 0.28, 0.64),
-				"sky_horizon_col": Vector3(1.26, 0.56, 0.42),
-				"sky_glow_col": Vector3(1.45, 0.52, 0.26),
-				"hemi_sky": Vector3(0.32, 0.36, 0.70), "hemi_ground": Vector3(0.24, 0.24, 0.42),
-				"shadow_ambient_tint": Vector3(0.90, 0.86, 1.22), "ambient_boost": 1.20,
-				"light_floor_col": Vector3(0.38, 0.42, 0.68), "light_floor": 0.50,
+				"sky_zenith_col": Vector3(0.06, 0.17, 0.34),
+				"sky_mid_col": Vector3(0.22, 0.38, 0.6),
+				"sky_horizon_col": Vector3(1.5, 0.62, 0.4),
+				"sky_glow_col": Vector3(2.1, 0.82, 0.3),
+				"hemi_sky": Vector3(0.36, 0.38, 0.48), "hemi_ground": Vector3(0.26, 0.26, 0.3),
+				"shadow_ambient_tint": Vector3(0.98, 0.92, 0.94), "ambient_boost": 1.20,
+				"light_floor_col": Vector3(0.44, 0.43, 0.42), "light_floor": 0.50,
 				"horizon_tint": Vector3(1.04, 0.88, 0.96), "sky_sat": 1.25, "horizon_haze": 0.44,
-				"cloud_lit_col": Vector3(1.95, 1.08, 0.88),
-				"cloud_shadow_col": Vector3(0.34, 0.34, 0.72),
-				"cloud_rim_col": Vector3(2.90, 1.40, 0.76),
-				"fog_beta": Vector3(3.4e-5, 5.0e-5, 1.12e-4), "mist": 0.048, "valley_mist_mult": 1.20,
+				"cloud_lit_col": Vector3(2.2, 1.1, 0.86),
+				"cloud_shadow_col": Vector3(0.34, 0.38, 0.58),
+				"cloud_rim_col": Vector3(3.2, 1.5, 0.7),
+				"fog_beta": Vector3(4.0e-5, 4.8e-5, 6.0e-5), "mist": 0.048, "valley_mist_mult": 1.20,
 				"cloud_cover": 0.36,
-				"grade_wb": Vector3(1.02, 0.98, 1.04),
-				"grade_shadow_tint": Vector3(0.86, 0.86, 1.22),
-				"grade_shadow_cast": Vector3(0.90, 0.90, 1.18),
-				"grade_lift_u": Vector3(0.010, 0.010, 0.024),
-				"grade_sat_u": 1.12, "grade_contrast_u": 0.07, "day_fresh_k": 0.15,
+				"grade_wb": Vector3(1.06, 0.98, 0.96),
+				"grade_shadow_tint": Vector3(0.94, 0.92, 0.94),
+				"grade_shadow_cast": Vector3(0.96, 0.94, 0.94),
+				"grade_lift_u": Vector3(0.004, 0.004, 0.008),
+				"grade_sat_u": 1.12, "grade_contrast_u": 0.35, "day_fresh_k": 0.15,
 			}
 		"night":
 			var md := moon_direction(22.5)
 			return {
-				"hours": 22.5, "sun_dir": md, "sun_col": Vector3(0.55, 0.72, 1.05),
-				"light_col": Vector3(0.88, 1.16, 1.95), "sun_disc_vis": 0.0, "moon_vis": 1.0,
-				"night_weight": 1.0, "night_glow": 1.0, "mist_weight": 0.12, "exposure": 0.68,
+				"hours": 22.5, "sun_dir": md, "sun_col": Vector3(0.5, 0.78, 0.95),
+				"light_col": Vector3(0.5, 0.98, 1.36), "sun_disc_vis": 0.0, "moon_vis": 1.0,
+				"night_weight": 1.0, "night_glow": 1.0, "mist_weight": 0.12, "exposure": 0.54,
 				"sky_analytic": 1.0,
-				"sky_zenith_col": Vector3(0.026, 0.050, 0.170),
-				"sky_mid_col": Vector3(0.058, 0.104, 0.290),
-				"sky_horizon_col": Vector3(0.118, 0.198, 0.430),
-				"sky_glow_col": Vector3(0.16, 0.24, 0.48),
-				"hemi_sky": Vector3(0.19, 0.28, 0.58), "hemi_ground": Vector3(0.14, 0.19, 0.38),
-				"shadow_ambient_tint": Vector3(0.84, 0.90, 1.24), "ambient_boost": 1.22,
-				"light_floor_col": Vector3(0.24, 0.34, 0.62), "light_floor": 0.50,
+				"sky_zenith_col": Vector3(0.01, 0.04, 0.08),
+				"sky_mid_col": Vector3(0.025, 0.085, 0.15),
+				"sky_horizon_col": Vector3(0.06, 0.16, 0.24),
+				"sky_glow_col": Vector3(0.06, 0.14, 0.2),
+				"hemi_sky": Vector3(0.12, 0.24, 0.34), "hemi_ground": Vector3(0.1, 0.16, 0.2),
+				"shadow_ambient_tint": Vector3(0.86, 1.0, 1.08), "ambient_boost": 1.22,
+				"light_floor_col": Vector3(0.14, 0.36, 0.5), "light_floor": 0.50,
 				"horizon_tint": Vector3(0.82, 0.92, 1.14), "sky_sat": 1.16, "horizon_haze": 0.36,
-				"cloud_lit_col": Vector3(0.46, 0.60, 1.02),
-				"cloud_shadow_col": Vector3(0.12, 0.17, 0.38),
-				"cloud_rim_col": Vector3(0.92, 1.14, 1.68),
-				"fog_beta": Vector3(3.2e-5, 5.2e-5, 1.08e-4), "mist": 0.042, "valley_mist_mult": 1.15,
+				"cloud_lit_col": Vector3(0.34, 0.52, 0.7),
+				"cloud_shadow_col": Vector3(0.08, 0.15, 0.22),
+				"cloud_rim_col": Vector3(0.7, 1.0, 1.2),
+				"fog_beta": Vector3(3.0e-5, 5.0e-5, 7.5e-5), "mist": 0.042, "valley_mist_mult": 1.15,
 				"cloud_cover": 0.30,
-				"grade_wb": Vector3(0.94, 0.97, 1.09),
-				"grade_shadow_tint": Vector3(0.82, 0.88, 1.22),
-				"grade_shadow_cast": Vector3(0.84, 0.90, 1.18),
-				"grade_lift_u": Vector3(0.009, 0.013, 0.028),
-				"grade_sat_u": 1.08, "grade_contrast_u": 0.07, "day_fresh_k": 0.0,
+				"grade_wb": Vector3(0.88, 1.0, 1.08),
+				"grade_shadow_tint": Vector3(0.74, 0.96, 1.1),
+				"grade_shadow_cast": Vector3(0.84, 0.98, 1.04),
+				"grade_lift_u": Vector3(0.004, 0.01, 0.014),
+				"grade_sat_u": 1.1, "grade_contrast_u": 0.2, "day_fresh_k": 0.0,
 			}
 		"mist":
 			var d := sun_direction(10.5)
 			return {
 				"hours": 10.5, "sun_dir": d, "sun_col": Vector3(0.88, 0.90, 0.92),
 				"light_col": Vector3(2.85, 2.78, 2.70), "sun_disc_vis": 0.32, "moon_vis": 0.0,
-				"night_weight": 0.0, "night_glow": 0.22, "mist_weight": 1.0, "exposure": 0.66,
+				"night_weight": 0.0, "night_glow": 0.22, "mist_weight": 1.0, "exposure": 0.7,
 				"sky_analytic": 1.0,
-				"sky_zenith_col": Vector3(0.46, 0.64, 0.90),
-				"sky_mid_col": Vector3(0.76, 0.90, 1.08),
-				"sky_horizon_col": Vector3(1.22, 1.32, 1.42),
-				"sky_glow_col": Vector3(0.68, 0.72, 0.76),
-				"hemi_sky": Vector3(0.56, 0.68, 0.86), "hemi_ground": Vector3(0.42, 0.46, 0.56),
-				"shadow_ambient_tint": Vector3(0.94, 0.98, 1.10), "ambient_boost": 1.18,
-				"light_floor_col": Vector3(0.50, 0.58, 0.72), "light_floor": 0.52,
+				"sky_zenith_col": Vector3(0.62, 0.74, 0.8),
+				"sky_mid_col": Vector3(0.92, 1.02, 1.06),
+				"sky_horizon_col": Vector3(1.3, 1.38, 1.4),
+				"sky_glow_col": Vector3(0.4, 0.42, 0.42),
+				"hemi_sky": Vector3(0.58, 0.68, 0.72), "hemi_ground": Vector3(0.42, 0.48, 0.46),
+				"shadow_ambient_tint": Vector3(0.96, 1.02, 1.02), "ambient_boost": 1.18,
+				"light_floor_col": Vector3(0.5, 0.6, 0.58), "light_floor": 0.52,
 				"horizon_tint": Vector3(0.96, 1.00, 1.04), "sky_sat": 0.92, "horizon_haze": 0.74,
 				"cloud_lit_col": Vector3(2.15, 2.20, 2.26),
-				"cloud_shadow_col": Vector3(0.78, 0.88, 1.08),
+				"cloud_shadow_col": Vector3(0.8, 0.88, 0.94),
 				"cloud_rim_col": Vector3(2.45, 2.48, 2.52),
-				"fog_beta": Vector3(1.25e-4, 1.45e-4, 1.85e-4), "mist": 0.24, "valley_mist_mult": 1.95,
+				"fog_beta": Vector3(1.35e-4, 1.50e-4, 1.65e-4), "mist": 0.24, "valley_mist_mult": 1.95,
 				"cloud_cover": 0.56,
-				"grade_wb": Vector3(0.97, 1.00, 1.03),
-				"grade_shadow_tint": Vector3(0.92, 0.96, 1.10),
-				"grade_shadow_cast": Vector3(0.94, 0.97, 1.08),
-				"grade_lift_u": Vector3(0.010, 0.012, 0.018),
-				"grade_sat_u": 0.96, "grade_contrast_u": 0.05, "day_fresh_k": 0.40,
+				"grade_wb": Vector3(0.98, 1.0, 1.0),
+				"grade_shadow_tint": Vector3(0.88, 1.0, 0.94),
+				"grade_shadow_cast": Vector3(0.92, 1.02, 0.98),
+				"grade_lift_u": Vector3(0.01, 0.013, 0.012),
+				"grade_sat_u": 0.62, "grade_contrast_u": 0.22, "day_fresh_k": 1.6,
 			}
 		_:
-			# "noon" — exact baseline hour 16.0 values (0% drift vs main 2081d03).
 			return {
 				"hours": HOURS, "sun_dir": noon_dir, "sun_col": noon_cols[0],
 				"light_col": noon_cols[1], "sun_disc_vis": 1.0, "moon_vis": 0.0,
-				"night_weight": 0.0, "night_glow": 0.0, "mist_weight": 0.0, "exposure": EXPOSURE,
-				"sky_analytic": 0.0,
-				"sky_zenith_col": Vector3(0.18, 0.42, 0.92),
-				"sky_mid_col": Vector3(0.45, 0.68, 1.05),
-				"sky_horizon_col": Vector3(0.95, 1.02, 1.14),
-				"sky_glow_col": Vector3(0.65, 0.52, 0.35),
+				"night_weight": 0.0, "night_glow": 0.0, "mist_weight": 0.0, "exposure": NOON_EXPOSURE,
+				"sky_analytic": 1.0,
+				"sky_zenith_col": NOON_SKY_ZENITH,
+				"sky_mid_col": NOON_SKY_MID,
+				"sky_horizon_col": NOON_SKY_HORIZON,
+				"sky_glow_col": NOON_SKY_GLOW,
 				"hemi_sky": PAINTERLY_HEMI_SKY, "hemi_ground": PAINTERLY_HEMI_GROUND,
 				"shadow_ambient_tint": PAINTERLY_SHADOW_TINT, "ambient_boost": PAINTERLY_AMBIENT_BOOST,
 				"light_floor_col": PAINTERLY_LIGHT_FLOOR_COL, "light_floor": PAINTERLY_LIGHT_FLOOR,
@@ -339,7 +348,7 @@ static func _preset_spec(name: String) -> Dictionary:
 				"grade_shadow_tint": DEFAULT_GRADE_SHADOW_TINT,
 				"grade_shadow_cast": DEFAULT_GRADE_SHADOW_CAST,
 				"grade_lift_u": DEFAULT_GRADE_LIFT,
-				"grade_sat_u": 1.12, "grade_contrast_u": 0.08, "day_fresh_k": 1.0,
+				"grade_sat_u": NOON_GRADE_SAT, "grade_contrast_u": NOON_GRADE_CONTRAST, "day_fresh_k": 1.0,
 			}
 
 
@@ -462,8 +471,8 @@ func _apply_spec(spec: Dictionary, push: bool = true) -> void:
 		hemi_sky = spec.hemi_sky
 		hemi_ground = spec.hemi_ground
 	else:
-		# Classic mode keeps exact HEMI_SKY / HEMI_GROUND at noon, scales softly for other presets.
-		var k := 1.0 if sky_analytic < 0.001 else 0.0
+		# Classic mode keeps exact HEMI_SKY / HEMI_GROUND at the noon hour, uses the preset values otherwise.
+		var k := 1.0 if is_equal_approx(hours, HOURS) else 0.0
 		hemi_sky = spec.hemi_sky.lerp(HEMI_SKY, k)
 		hemi_ground = spec.hemi_ground.lerp(HEMI_GROUND, k)
 	shadow_ambient_tint = spec.shadow_ambient_tint
@@ -655,8 +664,9 @@ func set_style(s: String) -> void:
 		hemi_sky = spec.hemi_sky
 		hemi_ground = spec.hemi_ground
 	else:
-		hemi_sky = HEMI_SKY if sky_analytic < 0.001 else spec.hemi_sky
-		hemi_ground = HEMI_GROUND if sky_analytic < 0.001 else spec.hemi_ground
+		var at_noon := is_equal_approx(hours, HOURS)
+		hemi_sky = HEMI_SKY if at_noon else spec.hemi_sky
+		hemi_ground = HEMI_GROUND if at_noon else spec.hemi_ground
 	var active_light := light_col * (PAINTERLY_DIRECT_SCALE if painterly else 1.0)
 	for m in mats:
 		m.set_shader_parameter("light_col", active_light)

@@ -85,11 +85,13 @@ void fragment() {
 		col *= grade_wb;
 		col = styl_tone(col);
 		if (day_fresh_k > 0.001) {
+			// Film greens: pull yellow-greens toward true green and a little darker. Gated on green
+			// leading red, so wheat, flowers and flags (red >= green) keep their hue.
 			float mx = max(col.r, max(col.g, col.b)), mn = min(col.r, min(col.g, col.b));
 			float chroma = mx - mn;
-			float is_green = smoothstep(0.01, 0.09, col.g - max(col.r * 0.84, col.b)) * smoothstep(0.02, 0.14, chroma);
-			float day_fresh = is_green * smoothstep(0.16, 0.45, mx);
-			col = mix(col, max(col + vec3(-0.008, 0.018, -0.018) * chroma * 1.4, 0.0), day_fresh * 0.45 * day_fresh_k);
+			float is_green = smoothstep(-0.01, 0.05, col.g - col.r) * smoothstep(0.0, 0.04, col.g - col.b) * smoothstep(0.01, 0.08, chroma);
+			float gk = is_green * day_fresh_k;
+			col = max(col + vec3(-0.34, -0.04, 0.10) * chroma * gk, 0.0) * (1.0 - 0.22 * gk);
 		}
 		float Lg = dot(col, vec3(0.2126, 0.7152, 0.0722));
 		vec3 s_tint = painterly > 0.5 ? grade_shadow_tint : SHADOW_TINT;
