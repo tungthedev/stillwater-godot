@@ -47,9 +47,10 @@ void vertex() {
 		v_crown = vec3(0.0);
 	} else {
 		vec3 p0 = VERTEX;
-		if (painterly > 0.5 && hide_in_hero > 0.5 && CUSTOM1.y >= 0.5 && UV.x <= 0.895) {
+		if (painterly > 0.5 && hide_in_hero > 0.5 && CUSTOM1.y > 0.85 && UV.x <= 0.895) {
 			// Cheap per-instance watertight vertex lumpiness breaks remaining sphere silhouettes on
-			// mid puffs with zero extra geometry and zero fragment cost.
+			// mid0 puffs with zero extra geometry and zero fragment cost (mid1 cores tag CUSTOM1.y
+			// = 0.75 so they stay geometrically identical to hero cores across the hero/mid1 swap).
 			float lump = sin(p0.x * 15.0 + p0.z * 11.0 + ip.x * 0.71) * cos(p0.y * 14.0 - p0.z * 9.0 + ip.z * 0.53);
 			VERTEX += NORMAL * (lump * 0.022);
 		}

@@ -18,6 +18,7 @@ extends Node3D
 # atlases in data/trees/ (tools/build_tree_meshes.gd, tools/bake_impostors.mjs).
 
 const SwapMultiMesh := preload("res://systems/swap_multimesh.gd")
+const Flags := preload("res://systems/flags.gd")
 
 const HERO_CELL := 32.0
 const NEAR_CELL := 64.0
@@ -126,6 +127,13 @@ var _count_vp := Vector2.ZERO
 var _count_pl := PackedFloat64Array()
 var _hero_changed := false
 var _mid_changed := false
+var card_fade_mode := 0.0
+var extra_aabb_pad := 0.0
+var _treepop := false
+var _tp_frame := 0
+var _tp_last_seq := -1
+var _tp_hero_changed := false
+var _tp_mid_changed := false
 
 
 func setup(w: RefCounted) -> void:
@@ -142,6 +150,23 @@ func _ready() -> void:
 	mid_r = float(tier.treeMidR)
 	mid_fine_r = float(tier.get("treeMidFineR", 40.0))
 	bush_r = float(tier.get("treeBushR", mid_r))
+	var heror_flag := Flags.value("heror", "")
+	if heror_flag != "":
+		hero_r = maxf(0.0, float(heror_flag))
+		mid_r = maxf(mid_r, hero_r + 32.0)
+	var pad_flag := Flags.value("aabbpad", "")
+	if pad_flag != "":
+		extra_aabb_pad = maxf(0.0, float(pad_flag))
+	var cf_flag := Flags.value("cardfade", "").to_lower()
+	if cf_flag == "old" or cf_flag == "1":
+		card_fade_mode = 1.0
+	elif cf_flag == "0" or cf_flag == "off":
+		card_fade_mode = 2.0
+	else:
+		card_fade_mode = 0.0
+	_treepop = Flags.has("treepop")
+	if _treepop and Flags.has("notime"):
+		Engine.time_scale = 0.0
 	base_hero_r = hero_r
 	base_mid_r = mid_r
 	base_mid_fine_r = mid_fine_r
@@ -211,6 +236,10 @@ func _load_assets() -> void:
 		mat.set_shader_parameter("blend_end", world.blend_end)
 	for mat in [hero_card_mat, mid_card_mat]:
 		mat.set_shader_parameter("leaf_atlas", leaf_tex)
+		mat.set_shader_parameter("card_fade_mode", card_fade_mode)
+	if Flags.has("nowind"):
+		for mat in [hero_opaque_mat, hero_card_mat, mid_opaque_mat, mid_card_mat, imp_mat]:
+			mat.set_shader_parameter("wind_strength", -0.4)
 	mid_opaque_mat.set_shader_parameter("hide_in_hero", 1.0)
 	mid_card_mat.set_shader_parameter("hide_in_hero", 1.0)
 
@@ -403,18 +432,22 @@ func _multimesh(mesh: Mesh, idx: PackedInt32Array, extra_of_kind: bool) -> Multi
 	return mm
 
 
-# Box around a cell's trees: the cell square plus crown overhang, ground spread plus the tallest
-# crown, plus wind sway (treeChunks.js cellBoundingSphere, as a box).
+# Box around a cell's trees: the cell square plus widest crown overhang (s * sx * 0.68 covers
+# every species' mesh radius), root depth, tallest crown, and wind sway.
 func _cell_aabb(idx: PackedInt32Array, cx: float, cz: float, size: float) -> AABB:
 	var y0 := INF
 	var y1 := -INF
 	var smax := 0.0
+	var rmax := 0.0
 	for i in idx:
 		y0 = minf(y0, py[i])
 		y1 = maxf(y1, py[i])
 		smax = maxf(smax, ps[i])
-	var hx := size * 0.5 + smax * 0.6 + SWAY_PAD
-	return AABB(Vector3(cx - hx, y0 - SWAY_PAD, cz - hx), Vector3(hx * 2.0, y1 - y0 + smax * 1.15 + SWAY_PAD * 2.0, hx * 2.0))
+		rmax = maxf(rmax, ps[i] * psx[i])
+	var hx := size * 0.5 + rmax * 0.68 + SWAY_PAD + extra_aabb_pad
+	var y_lo := y0 - smax * 0.15 - SWAY_PAD - extra_aabb_pad
+	var y_hi := y1 + smax * 1.15 + SWAY_PAD + extra_aabb_pad
+	return AABB(Vector3(cx - hx, y_lo, cz - hx), Vector3(hx * 2.0, y_hi - y_lo, hx * 2.0))
 
 
 func _build_far() -> void:
@@ -686,7 +719,7 @@ func _sync_hero(want: Dictionary) -> int:
 			nb.resize(cap * 16)
 			hero_bufs[v] = nb
 		var buf: PackedFloat32Array = hero_bufs[v]
-		var x0 := INF; var x1 := -INF; var y0 := INF; var y1 := -INF; var z0 := INF; var z1 := -INF; var smax := 0.0
+		var x0 := INF; var x1 := -INF; var y0 := INF; var y1 := -INF; var z0 := INF; var z1 := -INF; var smax := 0.0; var rmax := 0.0
 		for j in n:
 			var i := sub[j]
 			_write_instance(buf, j * 16, i, 0.0)
@@ -694,12 +727,16 @@ func _sync_hero(want: Dictionary) -> int:
 			y0 = minf(y0, py[i]); y1 = maxf(y1, py[i])
 			z0 = minf(z0, pz[i]); z1 = maxf(z1, pz[i])
 			smax = maxf(smax, ps[i])
-		var pad := smax * 0.6 + SWAY_PAD
-		var aabb := AABB(Vector3(x0 - pad, y0 - SWAY_PAD, z0 - pad), Vector3(x1 - x0 + pad * 2.0, y1 - y0 + smax * 1.15 + SWAY_PAD * 2.0, z1 - z0 + pad * 2.0))
+			rmax = maxf(rmax, ps[i] * psx[i])
+		var pad := rmax * 0.68 + SWAY_PAD + extra_aabb_pad
+		var y_lo := y0 - smax * 0.15 - SWAY_PAD - extra_aabb_pad
+		var y_hi := y1 + smax * 1.15 + SWAY_PAD + extra_aabb_pad
+		var aabb := AABB(Vector3(x0 - pad, y_lo, z0 - pad), Vector3(x1 - x0 + pad * 2.0, y_hi - y_lo, z1 - z0 + pad * 2.0))
 		hero_aabbs[v] = aabb
 		sw.set_visible(true)
 		sw.push(buf, n)
 		sw.mmis[sw._cur].custom_aabb = aabb
+		sw.mms[sw._cur].custom_aabb = aabb
 	return total
 
 
@@ -809,11 +846,38 @@ func _process(_delta: float) -> void:
 	if not frozen:
 		var cam := get_viewport().get_camera_3d()
 		if cam != null and count > 0:
+			_hero_changed = false
+			_mid_changed = false
 			update_lod(cam.global_position)
 			if on and not _prefetch.is_empty():
 				var tp := Time.get_ticks_usec()
 				_drain_prefetch(t0)
 				prefetch_us += Time.get_ticks_usec() - tp
+			if _treepop and OS.has_feature("web"):
+				var seq := int(cam.get_meta("tp_seq", -1))
+				if seq != _tp_last_seq:
+					_tp_last_seq = seq
+					_tp_frame = 0
+					_tp_hero_changed = false
+					_tp_mid_changed = false
+				_tp_hero_changed = _tp_hero_changed or _hero_changed
+				_tp_mid_changed = _tp_mid_changed or _mid_changed
+				_tp_frame += 1
+				var sw_cur := []
+				for sw in hero_swaps:
+					sw_cur.append(sw._cur)
+				JavaScriptBridge.eval("window.__tpState=%s" % JSON.stringify({
+					"seq": seq,
+					"frame": _tp_frame,
+					"hero_cells": hero_active.size(),
+					"mid_cells": mid_active.size(),
+					"hero_changed": _tp_hero_changed,
+					"mid_changed": _tp_mid_changed,
+					"lod_gen": _lod_gen,
+					"hero_cnt": stats.hero,
+					"mid_cnt": stats.mid,
+					"swap_cur": sw_cur,
+				}))
 	prof_us = Time.get_ticks_usec() - t0
 
 

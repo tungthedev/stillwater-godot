@@ -30,18 +30,34 @@ func _init() -> void:
 	var hero_lod := "hero2" if int(meta.tiers.low.treeDetail) >= 2 else "hero1"
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
 	var built := 0
+	var hero_meshes: Dictionary = {}
+	var conifer_mid1: Dictionary = {}
 	for m in meshes.meshes:
 		var lod: String = m.lod
+		var is_conifer := str(m.generator) == "fluffyPine" or str(m.generator) == "fluffyLarch"
+		# Conifers (pine, larch) carry lusher 9-card/clump crowns on mid1 (and 20-face inner cores,
+		# < half the triangles of hero1's 6-card/clump build), so use mid1 for both hero and mid1
+		# to keep close conifers lush and eliminate hero <-> mid1 clump-RNG mismatch completely.
+		if is_conifer and lod == hero_lod:
+			continue
+		if not is_conifer and lod == "mid1":
+			continue
 		if lod != hero_lod and lod != "mid0" and lod != "mid1" and lod != "hero":
 			continue
 		var name: String = m.file.get_file().get_basename()
 		# Level names in the shipped pack do not depend on the tier's hero detail.
 		var out_name := name.replace("_" + hero_lod, "_hero") if lod == hero_lod else name
-		var res := _build(SRC.path_join(m.file), m)
+		var res := _build(SRC.path_join(m.file), m, lod == "mid1")
 		if res.is_empty():
 			quit(1)
 			return
 		var mesh: ArrayMesh = res.mesh
+		if lod == hero_lod:
+			var sp := out_name.trim_suffix("_hero")
+			hero_meshes[sp] = mesh
+		elif is_conifer and lod == "mid1":
+			var sp := out_name.trim_suffix("_mid1")
+			conifer_mid1[sp] = res
 		var path := OUT.path_join(out_name + ".res")
 		var err := ResourceSaver.save(mesh, path, ResourceSaver.FLAG_COMPRESS)
 		if err != OK:
@@ -52,11 +68,36 @@ func _init() -> void:
 			path, m.file, mesh.get_surface_count(), res.opaque_tris, res.card_tris,
 			res.bark_flipped, res.bark_tris, res.solid_flipped, res.solid_tris])
 		built += 1
+	for sp in conifer_mid1:
+		var res: Dictionary = conifer_mid1[sp]
+		var path := OUT.path_join(sp + "_hero.res")
+		var err := ResourceSaver.save(res.mesh, path, ResourceSaver.FLAG_COMPRESS)
+		if err != OK:
+			printerr("save %s: %s" % [path, error_string(err)])
+			quit(1)
+			return
+		print("%s <- %s_mid1: %d surfaces (opaque %d tris, cards %d tris)" % [
+			path, sp, (res.mesh as ArrayMesh).get_surface_count(), res.opaque_tris, res.card_tris])
+		built += 1
+	# Derive broadleaf *_mid1.res directly from *_hero.res (same bark trunk/boughs, same leaf-card
+	# quads, 20-face inner cores at the exact hero clump centers) so the hero <-> mid1 LOD swap at
+	# 12-16 m never shifts clump positions or blinks branches.
+	for sp in hero_meshes:
+		var mid1_res := _build_mid1_from_hero(hero_meshes[sp])
+		var path := OUT.path_join(sp + "_mid1.res")
+		var err := ResourceSaver.save(mid1_res.mesh, path, ResourceSaver.FLAG_COMPRESS)
+		if err != OK:
+			printerr("save %s: %s" % [path, error_string(err)])
+			quit(1)
+			return
+		print("%s <- %s_hero: %d surfaces (opaque %d tris, cards %d tris; %d cores)" % [
+			path, sp, mid1_res.mesh.get_surface_count(), mid1_res.opaque_tris, mid1_res.card_tris, mid1_res.cores])
+		built += 1
 	print("BUILD_TREE_MESHES %d meshes (hero level %s)" % [built, hero_lod])
 	quit(0)
 
 
-func _build(file: String, m: Dictionary) -> Dictionary:
+func _build(file: String, m: Dictionary, is_mid1_core: bool = false) -> Dictionary:
 	var bytes := FileAccess.get_file_as_bytes(file)
 	var vc := int(m.vertexCount)
 	var L: Dictionary = m.layout
@@ -119,7 +160,7 @@ func _build(file: String, m: Dictionary) -> Dictionary:
 	var is_puff_only := card_idx.is_empty()
 	var is_conifer := str(m.generator) == "fluffyPine" or str(m.generator) == "fluffyLarch"
 	if not op_idx.is_empty():
-		_add_opaque_surface(mesh, pos, nrm, uv, col, crown, op_idx, vc, is_puff_only)
+		_add_opaque_surface(mesh, pos, nrm, uv, col, crown, op_idx, vc, is_puff_only, is_mid1_core)
 	if not card_idx.is_empty():
 		_add_card_surface(mesh, pos, nrm, uv, col, crown, card_idx, vc, is_conifer)
 	return {
@@ -134,7 +175,7 @@ func _build(file: String, m: Dictionary) -> Dictionary:
 
 
 static func _add_opaque_surface(mesh: ArrayMesh, pos: PackedFloat32Array, nrm: PackedFloat32Array, uv: PackedFloat32Array,
-		col: PackedFloat32Array, crown: PackedFloat32Array, src_idx: PackedInt32Array, vc: int, is_mid0: bool = false) -> void:
+		col: PackedFloat32Array, crown: PackedFloat32Array, src_idx: PackedInt32Array, vc: int, is_mid0: bool = false, is_mid1_core: bool = false) -> void:
 	var remap := PackedInt32Array()
 	remap.resize(vc)
 	remap.fill(-1)
@@ -190,7 +231,7 @@ static func _add_opaque_surface(mesh: ArrayMesh, pos: PackedFloat32Array, nrm: P
 		c0[j * 4 + 2] = col[i * 3 + 2] * col_k
 		c0[j * 4 + 3] = ao_v
 		c1[j * 2] = crown[i * 3 + 1]
-		c1[j * 2 + 1] = crown[i * 3 + 2]
+		c1[j * 2 + 1] = 0.75 if (is_mid1_core and is_solid_fol) else crown[i * 3 + 2]
 	if is_mid0:
 		_shape_mid0_puffs(verts, solid_mask, idx)
 	var arrays := []
@@ -407,6 +448,160 @@ static func _add_card_surface(mesh: ArrayMesh, pos: PackedFloat32Array, nrm: Pac
 		| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT) \
 		| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM2_SHIFT)
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt)
+
+
+static func _build_mid1_from_hero(hero: ArrayMesh) -> Dictionary:
+	var phi := 1.618033988749895
+	var ico_raw := [
+		Vector3(-1, phi, 0), Vector3(1, phi, 0), Vector3(-1, -phi, 0), Vector3(1, -phi, 0),
+		Vector3(0, -1, phi), Vector3(0, 1, phi), Vector3(0, -1, -phi), Vector3(0, 1, -phi),
+		Vector3(phi, 0, -1), Vector3(phi, 0, 1), Vector3(-phi, 0, -1), Vector3(-phi, 0, 1),
+	]
+	var ico_v := PackedVector3Array()
+	for v in ico_raw:
+		ico_v.append((v as Vector3).normalized())
+	var ico_f := [
+		[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+		[1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+		[3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+		[4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+	]
+
+	var s0 := hero.surface_get_arrays(0)
+	var h_verts: PackedVector3Array = s0[Mesh.ARRAY_VERTEX]
+	var h_norms: PackedVector3Array = s0[Mesh.ARRAY_NORMAL]
+	var h_uvs: PackedVector2Array = s0[Mesh.ARRAY_TEX_UV]
+	var h_c0: PackedFloat32Array = s0[Mesh.ARRAY_CUSTOM0]
+	var h_c1: PackedFloat32Array = s0[Mesh.ARRAY_CUSTOM1]
+	var h_idx: PackedInt32Array = s0[Mesh.ARRAY_INDEX]
+	var hn := h_verts.size()
+
+	var solid_mask := PackedByteArray()
+	solid_mask.resize(hn)
+	for i in hn:
+		solid_mask[i] = 1 if (h_c1[i * 2 + 1] >= 0.5 and h_uvs[i].x <= 0.895) else 0
+
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var c0 := PackedFloat32Array()
+	var c1 := PackedFloat32Array()
+	var idx := PackedInt32Array()
+
+	# Copy all bark triangles verbatim from hero surface 0.
+	var bark_remap := PackedInt32Array()
+	bark_remap.resize(hn)
+	bark_remap.fill(-1)
+	var adj: Array = []
+	adj.resize(hn)
+	for i in hn:
+		adj[i] = []
+	for t in range(0, h_idx.size(), 3):
+		var a := h_idx[t]
+		var b := h_idx[t + 1]
+		var c := h_idx[t + 2]
+		if solid_mask[a] == 0:
+			for v in [a, b, c]:
+				var d := bark_remap[v]
+				if d < 0:
+					d = verts.size()
+					bark_remap[v] = d
+					verts.append(h_verts[v])
+					norms.append(h_norms[v])
+					uvs.append(h_uvs[v])
+					c0.append(h_c0[v * 4])
+					c0.append(h_c0[v * 4 + 1])
+					c0.append(h_c0[v * 4 + 2])
+					c0.append(h_c0[v * 4 + 3])
+					c1.append(h_c1[v * 2])
+					c1.append(h_c1[v * 2 + 1])
+				idx.append(d)
+		else:
+			(adj[a] as Array).append(b); (adj[a] as Array).append(c)
+			(adj[b] as Array).append(a); (adj[b] as Array).append(c)
+			(adj[c] as Array).append(a); (adj[c] as Array).append(b)
+
+	# Replace each 80-face hero inner core component with a 20-face icosahedron at the exact same
+	# centre, radii, shading normals, colour and crown AO.
+	var seen := PackedByteArray()
+	seen.resize(hn)
+	var cores := 0
+	for i in hn:
+		if solid_mask[i] == 0 or seen[i] != 0 or (adj[i] as Array).is_empty():
+			continue
+		var comp := PackedInt32Array()
+		var queue: Array[int] = [i]
+		seen[i] = 1
+		var bmin := h_verts[i]
+		var bmax := h_verts[i]
+		while not queue.is_empty():
+			var u: int = queue.pop_back()
+			comp.append(u)
+			var p := h_verts[u]
+			bmin = Vector3(minf(bmin.x, p.x), minf(bmin.y, p.y), minf(bmin.z, p.z))
+			bmax = Vector3(maxf(bmax.x, p.x), maxf(bmax.y, p.y), maxf(bmax.z, p.z))
+			for w in (adj[u] as Array):
+				var wi: int = w
+				if seen[wi] == 0:
+					seen[wi] = 1
+					queue.append(wi)
+		var ctr := (bmin + bmax) * 0.5
+		var rad := (bmax - bmin) * 0.5
+		var base_v := verts.size()
+		for k in ico_v.size():
+			var d := ico_v[k]
+			var p := Vector3(ctr.x + d.x * rad.x, ctr.y + d.y * rad.y, ctr.z + d.z * rad.z)
+			var best_u := comp[0]
+			var best_d2 := INF
+			for u in comp:
+				var d2 := h_verts[u].distance_squared_to(p)
+				if d2 < best_d2:
+					best_d2 = d2
+					best_u = u
+			verts.append(p)
+			norms.append(h_norms[best_u])
+			uvs.append(h_uvs[best_u])
+			c0.append(h_c0[best_u * 4])
+			c0.append(h_c0[best_u * 4 + 1])
+			c0.append(h_c0[best_u * 4 + 2])
+			c0.append(h_c0[best_u * 4 + 3])
+			c1.append(h_c1[best_u * 2])
+			# 0.75 marks a mid1 inner core (solid foliage >= 0.5, skips mid0 puff lumpiness > 0.85).
+			c1.append(0.75)
+		for f in ico_f:
+			var a := base_v + int(f[0])
+			var b := base_v + int(f[1])
+			var c := base_v + int(f[2])
+			var va := verts[a]; var vb := verts[b]; var vc := verts[c]
+			var out_n := ((va + vb + vc) / 3.0) - ctr
+			if (vc - va).cross(vb - va).dot(out_n) >= 0.0:
+				idx.append(a); idx.append(b); idx.append(c)
+			else:
+				idx.append(a); idx.append(c); idx.append(b)
+		cores += 1
+
+	var mesh := ArrayMesh.new()
+	var arr0 := []
+	arr0.resize(Mesh.ARRAY_MAX)
+	arr0[Mesh.ARRAY_VERTEX] = verts
+	arr0[Mesh.ARRAY_NORMAL] = norms
+	arr0[Mesh.ARRAY_TEX_UV] = uvs
+	arr0[Mesh.ARRAY_CUSTOM0] = c0
+	arr0[Mesh.ARRAY_CUSTOM1] = c1
+	arr0[Mesh.ARRAY_INDEX] = idx
+	var fmt0 := (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
+		| (Mesh.ARRAY_CUSTOM_RG_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT)
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr0, [], {}, fmt0)
+
+	var card_tris := 0
+	if hero.get_surface_count() >= 2:
+		var s1 := hero.surface_get_arrays(1)
+		var fmt1 := (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
+			| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT) \
+			| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM2_SHIFT)
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, s1, [], {}, fmt1)
+		card_tris = (s1[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+	return {"mesh": mesh, "opaque_tris": idx.size() / 3, "card_tris": card_tris, "cores": cores}
 
 
 static func _f32(bytes: PackedByteArray, offset: int, count: int) -> PackedFloat32Array:

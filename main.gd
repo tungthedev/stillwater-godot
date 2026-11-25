@@ -7,7 +7,7 @@ extends Node
 const CompactWorld := preload("res://world/compact_world.gd")
 const Flags := preload("res://systems/flags.gd")
 # Bumped with every behaviour change, so a measurement can prove which build it ran.
-const BUILD := "w5-1"
+const BUILD := "w5-2"
 
 
 func _ready() -> void:
@@ -102,7 +102,7 @@ func _ready() -> void:
 	cam.setup(world)
 	scene.add_child(cam)
 	# The game is the default page; bench, pose and shot pages keep the fixed camera poses.
-	var game := not (Flags.has("bench") or Flags.has("pose") or Flags.has("shot") or Flags.has("bench-shot") or Flags.has("capture"))
+	var game := not (Flags.has("bench") or Flags.has("pose") or Flags.has("shot") or Flags.has("bench-shot") or Flags.has("capture") or Flags.has("treepop"))
 	# Slow diurnal cycle runs in normal play unless a fixed ?tod= or ?time= was requested.
 	env_sys.set_cycle_enabled(game and Flags.value("tod") == "" and Flags.value("time") == "")
 	var audio_sys := Node.new()

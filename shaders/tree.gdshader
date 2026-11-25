@@ -16,6 +16,8 @@ uniform sampler2D tree_cells : filter_nearest, repeat_disable;
 uniform vec2 tree_cell_origin;
 uniform float hide_in_hero = 0.0;
 uniform float wind_strength = 0.5;
+// 0.0 = default (fixed), 1.0 = old hard-step collapse (?cardfade=old), 2.0 = disabled (?cardfade=0).
+uniform float card_fade_mode = 0.0;
 
 varying vec3 v_lit;
 varying vec3 v_atm_mul;
@@ -34,24 +36,41 @@ void vertex() {
 		v_alpha_cut = 1.0;
 	} else {
 		mat3 m = mat3(MODEL_MATRIX);
-		vec3 inv_s2 = vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2]));
+		vec3 inv_s2 = max(vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2])), vec3(1e-6));
 		vec3 card_off = CUSTOM2.xyz;
 		vec3 card_center = VERTEX - card_off;
 		vec3 w_face_n = w_normalize(m * (CUSTOM1.yzw / inv_s2));
 		vec3 w_center = (MODEL_MATRIX * vec4(card_center, 1.0)).xyz;
 		vec3 cam = CAMERA_POSITION_WORLD;
-		vec3 to_cam = w_normalize(cam - w_center);
+		vec3 to_cam_v = cam - w_center;
+		float center_d = length(to_cam_v);
+		vec3 to_cam = to_cam_v * inversesqrt(max(dot(to_cam_v, to_cam_v), 1e-20));
 		float ndv = abs(dot(w_face_n, to_cam));
-		// Genshin edge-on card fade: collapse grazing leaf cards completely to zero area so
-		// edge-on slivers never float in open sky or waste fragment overdraw. Visible cards stay
-		// >= 72% scale so no card ever shrinks into a detached thin line. Conifers (CUSTOM2.w > 0.5)
-		// carry horizontal drooping boughs so they use a narrower collapse band.
 		float is_conifer = CUSTOM2.w;
-		float lo = mix(0.32, 0.12, is_conifer);
-		float hi = mix(0.48, 0.24, is_conifer);
 		float shrink = 1.0;
-		if (painterly > 0.5) {
-			shrink = ndv < lo ? 0.0 : mix(mix(0.72, 0.76, is_conifer), 1.0, smoothstep(lo, hi, ndv));
+		float alpha_cut = 0.44;
+		if (painterly > 0.5 && card_fade_mode < 1.5) {
+			if (card_fade_mode > 0.5) {
+				// Legacy hard-step collapse (?cardfade=old for on-device A/B comparison).
+				float lo = mix(0.32, 0.12, is_conifer);
+				float hi = mix(0.48, 0.24, is_conifer);
+				shrink = ndv < lo ? 0.0 : mix(mix(0.72, 0.76, is_conifer), 1.0, smoothstep(lo, hi, ndv));
+				float cut_hi = mix(0.50, 0.46, is_conifer);
+				alpha_cut = mix(cut_hi, 0.44, smoothstep(lo, hi, ndv));
+			} else {
+				// Distance-gated smooth edge-on card fade (no hard step): up close (<28 m) cards
+				// never collapse to zero so walking past near trees never blinks leaf clusters on
+				// or off; beyond 28-56 m a wide monotonic ramp folds grazing cards cleanly so
+				// distant silhouettes stay painted without flat slivers in open sky.
+				float far_k = smoothstep(28.0, 56.0, center_d);
+				float lo_f = mix(0.06, 0.03, is_conifer);
+				float hi_f = mix(0.40, 0.22, is_conifer);
+				float s_far = smoothstep(lo_f, hi_f, ndv);
+				float s_near = mix(mix(0.84, 0.90, is_conifer), 1.0, smoothstep(0.04, 0.30, ndv));
+				shrink = mix(s_near, s_far, far_k);
+				float cut_graz = mix(0.56, 0.50, is_conifer);
+				alpha_cut = mix(cut_graz, 0.44, smoothstep(0.04, 0.30, ndv));
+			}
 		}
 		vec3 p0 = card_center + card_off * shrink;
 		VERTEX = p0;
@@ -67,8 +86,7 @@ void vertex() {
 		vec3 wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float camD = length(wpos - cam);
 		v_cam_d = camD;
-		float cut_hi = mix(0.50, 0.46, is_conifer);
-		v_alpha_cut = painterly > 0.5 ? mix(cut_hi, 0.44, smoothstep(lo, hi, ndv)) : 0.44;
+		v_alpha_cut = alpha_cut;
 		w_atmosphere(wpos, cam, v_atm_mul, v_atm_add);
 
 		// Spherical crown-dome volumetric lighting evaluated per vertex.

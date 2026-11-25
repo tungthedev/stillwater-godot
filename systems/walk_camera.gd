@@ -22,6 +22,8 @@ var t := 0.0
 var walk_pts := PackedVector2Array()
 var walk_dist := PackedFloat32Array()
 var _walk_i := 1
+var _treepop := false
+var _tp_seq := -1
 
 
 func setup(w: RefCounted) -> void:
@@ -46,6 +48,8 @@ func _ready() -> void:
 		set_pose_name(want)
 	else:
 		set_mode(maxi(0, MODES.find(want)))
+	if OS.has_feature("web"):
+		_treepop = bool(JavaScriptBridge.eval("new URLSearchParams(location.search).has('treepop')"))
 
 
 static func start_mode() -> String:
@@ -118,6 +122,19 @@ func _process(delta: float) -> void:
 
 
 func _tick(delta: float) -> void:
+	if _treepop and OS.has_feature("web"):
+		var raw = JavaScriptBridge.eval("window.__tpCmd ? JSON.stringify(window.__tpCmd) : ''")
+		if raw != null and str(raw) != "":
+			var cmd = JSON.parse_string(str(raw))
+			if cmd is Dictionary and int(cmd.get("seq", -1)) != _tp_seq:
+				_tp_seq = int(cmd["seq"])
+				var px_c: float = float(cmd["x"])
+				var pz_c: float = float(cmd["z"])
+				var py_c: float = float(cmd["y"]) if cmd.has("y") else (float(world.height_near(px_c, pz_c)) + float(world.meta.poses.eyeHeight))
+				position = Vector3(px_c, py_c, pz_c)
+				rotation = Vector3(float(cmd["pitch"]), float(cmd["yaw"]), 0.0)
+				set_meta("tp_seq", _tp_seq)
+		return
 	if external:
 		return
 	if mode() == "walk":
