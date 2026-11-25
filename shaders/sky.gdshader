@@ -1,8 +1,7 @@
-// Stillwater's sky dome (src/world/sky.js) at hour 16: the sky-view LUT read back from the game,
-// its saturation and pale-horizon styling, the sun disc and glow, cirrus wisps, and an optional
-// sky-shader cumulus layer (enabled via ?clouds=sky for A/B against the default cloud billboards). Stars,
-// moon and the golden-hour / dusk terms have zero weight at hour 16. Graded like the terrain (see
-// stillwater.gdshaderinc).
+// Sky dome: the time-of-day analytic sky ramp from environment.gd (or Stillwater's sky-view LUT with
+// its saturation and pale-horizon styling when sky_analytic < 1), the sun disc and glow, stars and
+// moon at night, cirrus wisps, and an optional sky-shader cumulus layer (enabled via ?clouds=sky for
+// A/B against the default cloud billboards). Graded like the terrain (see stillwater.gdshaderinc).
 shader_type sky;
 
 #include "res://shaders/stillwater.gdshaderinc"
