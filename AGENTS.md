@@ -3,6 +3,22 @@
 A Godot 4.7 port of the Stillwater valley walk, built for phones first. It uses the GL Compatibility
 renderer (WebGL2 on the web). iPhone Safari is the main test target; native iOS comes later.
 
+## The look: Studio Ghibli, for everything
+
+Everything built in this game follows the look, feel and vibe of a Studio Ghibli film: terrain, grass,
+trees, sky, sun, clouds, mountains, water, houses, interiors, props, light, motion and UI. That doesn't
+mean a 2D renderer. It means a 3D world you walk through that feels like a Ghibli background painting:
+
+- painted surfaces (gouache-like colour and soft tonal steps, no photo detail or shiny highlights)
+- shapes read as soft masses with a few crisp lit edges
+- colour graded after "When Marnie Was There": pale cyan day skies, deep true greens, warm evenings
+- no ink outlines on scenery
+- small life in the frame: wind as moving light, drifting clouds, smoke, birds
+
+Judge every visual change side by side with film stills (Ghibli's free still library:
+https://www.ghibli.jp/info/013772/), and say how it moves toward them. Speed still comes first: the
+look must fit the phone budget.
+
 ## Commands
 
 - Web build: `godot --headless --export-release "Web" build/web/index.html`. A healthy `index.pck` is
